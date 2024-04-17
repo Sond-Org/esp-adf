@@ -26,8 +26,7 @@ IDF_SUPPORT_CHIP = {'722043f734':['v33'],
                     'release/v4.2':['v42'],
                     'release/v4.3':['v43'],
                     'v4.3.4':['v43'],
-                    'release/v4.4':['v44'],
-                    'release/v5.0':['v50']}
+                    'release/v4.4':['v44']}
 
 ADF_PATH = os.getenv('ADF_PATH')
 if not ADF_PATH:
@@ -39,7 +38,7 @@ if not BUILD_PATH:
     print('Please set BUILD_PATH before running this script')
     raise SystemExit(-1)
 
-APPS_JSON_PATH = ADF_PATH + '/tools/ci/apps.json'
+APPS_JSON_PATH = ADF_PATH + '/tools/ci/apps_v4_4.json'
 LIST_JSON_PATH = BUILD_PATH + '/list.json'
 LIST_JSON_BK_PATH = BUILD_PATH + '/list_backup.json'
 
@@ -57,7 +56,7 @@ def filter_examples_in_list_json(reserve_example):
             print(single_example_json)
             list_json.write(str(single_example_json[0])+'\n')
 
-# Parse apps.json
+# Parse apps_v4_4.json
 # Get all the examples supported by the current development board under the idf_branch version from 'apps.josn'.
 def parse_apps_json(idf_branch, board):
     apps_json = open(APPS_JSON_PATH, 'r', encoding='utf8', errors='ignore').readlines()

@@ -49,6 +49,7 @@
  * @brief SDCARD Function Definition
  *        PMOD2 for one line sdcard
  */
+#define FUNC_SDCARD_EN             (1)
 #define SDCARD_OPEN_FILE_NUM_MAX    5
 #define SDCARD_INTR_GPIO            -1
 #define SDCARD_PWR_CTRL             -1
@@ -82,7 +83,7 @@
 #define PA_ENABLE_GPIO              GPIO_NUM_46
 #define HEADPHONE_DETECT            -1
 #define CODEC_ADC_I2S_PORT          (0)
-#define CODEC_ADC_BITS_PER_SAMPLE   I2S_BITS_PER_SAMPLE_32BIT
+#define CODEC_ADC_BITS_PER_SAMPLE   (32) /* 32bit */
 #define CODEC_ADC_SAMPLE_RATE       (48000)
 #define RECORD_HARDWARE_AEC         (true)
 #define BOARD_PA_GAIN               (0) /* Power amplifier gain defined by board (dB) */

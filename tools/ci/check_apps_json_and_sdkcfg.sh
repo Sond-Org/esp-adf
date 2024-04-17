@@ -6,11 +6,8 @@
 
 [ -z ${IDF_PATH} ] && die "IDF_PATH is not set"
 [ -z ${ADF_PATH} ] && die "ADF_PATH is not set"
-[ -z ${BUILD_PATH} ] && die "BUILD_PATH is not set"
 
 set +e
-
-export LIST_JSON_PATH=${BUILD_PATH}/list.json
 
 if ! type jq >/dev/null 2>&1;then
     apt-get update
@@ -19,8 +16,7 @@ else
     echo "The jq tool has been installed"
 fi
 
-jq -r .app_dir ${LIST_JSON_PATH} > examples.txt
-cat examples.txt | grep -o '/examples/.*' > check_apps_json_and_sdk.txt
+cat apps.txt | grep -o '/examples/.*' > check_apps_json_and_sdk.txt
 BOARD_NAME=(`cat $ADF_PATH/tools/ci/apps.json | grep -E "ESP+[0-9a-zA-Z_]+" -o | sort -u -r`)
 APPS_CHECK_RESULT="OK"
 
@@ -79,13 +75,13 @@ function update_audio_hal() {
             new_config="CONFIG_"$2"_BOARD=y"
             sed -i "s%${old_config}%${new_config}%" $ADF_PATH${line}"/"$1
             # It is easy to see the change of audio_hal
-            # echo $ADF_PATH${line}"/"$1 "AUDIO_HAL:"$old_config " --> " $new_config
+            # echo $ADF_PATH${line}"/"$1 "AUDIO_BOARD:"$old_config " --> " $new_config
         else
             sed -i '$a\CONFIG_'$2'_BOARD=y' $ADF_PATH${line}"/"$1
             cat $ADF_PATH${line}"/"$1
         fi
     else
-        echo -e "\e[32m " $ADF_PATH${line}"/"$1 " skip \e[0m"
+        echo -e "\e[33m WARNING: " $ADF_PATH${line}"/"$1 " skip \e[0m"
     fi
 }
 
@@ -102,7 +98,7 @@ do
         # Check if idf version is defined
         check_audio_board_idf_ver
 
-        # Update AUDIO_HAL
+        # Update AUDIO_BOARD
         update_audio_hal $1 $2
 
     else

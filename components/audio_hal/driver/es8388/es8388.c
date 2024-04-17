@@ -63,6 +63,7 @@ audio_hal_func_t AUDIO_CODEC_ES8388_DEFAULT_HANDLE = {
     .audio_codec_set_mute = es8388_set_voice_mute,
     .audio_codec_set_volume = es8388_set_voice_volume,
     .audio_codec_get_volume = es8388_get_voice_volume,
+    .audio_codec_enable_pa = es8388_pa_power,
     .audio_hal_lock = NULL,
     .handle = NULL,
 };
@@ -479,7 +480,7 @@ esp_err_t es8388_get_voice_mute(void)
  *     - (-1) Parameter error
  *     - (0)   Success
  */
-esp_err_t es8388_config_dac_output(int output)
+esp_err_t es8388_config_dac_output(es_dac_output_t output)
 {
     esp_err_t res;
     uint8_t reg = 0;
@@ -569,11 +570,13 @@ esp_err_t es8388_config_i2s(audio_hal_codec_mode_t mode, audio_hal_codec_i2s_ifa
     return res;
 }
 
-void es8388_pa_power(bool enable)
+esp_err_t es8388_pa_power(bool enable)
 {
+    esp_err_t res = ESP_OK;
     if (enable) {
-        gpio_set_level(get_pa_enable_gpio(), 1);
+        res = gpio_set_level(get_pa_enable_gpio(), 1);
     } else {
-        gpio_set_level(get_pa_enable_gpio(), 0);
+        res = gpio_set_level(get_pa_enable_gpio(), 0);
     }
+    return res;
 }

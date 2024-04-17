@@ -22,12 +22,10 @@
 
 typedef struct {
     uint8_t                channel;
-    i2s_port_t             i2s_port;
+    int                    i2s_port;
     audio_element_handle_t i2s_reader;
     ringbuf_handle_t       pcm_buffer;
 } record_src_i2s_t;
-
-static audio_board_handle_t audio_board;
 
 void close_i2s_record(record_src_handle_t handle)
 {
@@ -56,31 +54,19 @@ record_src_handle_t open_i2s_record(void *cfg, int cfg_size)
     if (i2s_src == NULL) {
         return NULL;
     }
-    if (audio_board == NULL) {
-        audio_board = audio_board_init();
-        if (audio_board == NULL) {
-            free(i2s_src);
-            ESP_LOGE(TAG, "Fail to init audio board");
-            return NULL;
-        }
-        audio_hal_ctrl_codec(audio_board->audio_hal, AUDIO_HAL_CODEC_MODE_BOTH, AUDIO_HAL_CTRL_START);
-        audio_hal_set_volume(audio_board->audio_hal, 0);
-    }
+ 
     record_src_audio_cfg_t *aud_cfg = (record_src_audio_cfg_t *) cfg;
-    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
-#if defined CONFIG_ESP_LYRAT_MINI_V1_1_BOARD
-    i2s_cfg.i2s_port = 1;
-#endif
-    i2s_cfg.i2s_config.bits_per_sample = aud_cfg->bits_per_sample;
-    i2s_cfg.i2s_config.sample_rate = aud_cfg->sample_rate;
-    i2s_cfg.type = AUDIO_STREAM_READER;
+
+    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT_WITH_PARA(CODEC_ADC_I2S_PORT, 44100, 16, AUDIO_STREAM_READER);
+    i2s_cfg.uninstall_drv = false;
     if (aud_cfg->channel == 1) {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+        i2s_cfg.std_cfg.slot_cfg.slot_mode = I2S_SLOT_MODE_MONO;
+        i2s_cfg.std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+#else
         i2s_cfg.i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
-#if defined CONFIG_ESP_LYRAT_MINI_V1_1_BOARD
-#if (ESP_IDF_VERSION <= ESP_IDF_VERSION_VAL(4, 0, 0))
-        i2s_cfg.i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT;
 #endif
-#endif
+
     }
     i2s_src->i2s_reader = i2s_stream_init(&i2s_cfg);
     if (i2s_src->i2s_reader == NULL) {
@@ -88,7 +74,8 @@ record_src_handle_t open_i2s_record(void *cfg, int cfg_size)
         ESP_LOGE(TAG, "Fail to initialize i2s driver");
         return NULL;
     }
-    i2s_src->i2s_port = i2s_cfg.i2s_port;
+    i2s_stream_set_clk(i2s_src->i2s_reader, aud_cfg->sample_rate, aud_cfg->bits_per_sample, aud_cfg->channel);
+    i2s_src->i2s_port = CODEC_ADC_I2S_PORT;
     i2s_src->channel = aud_cfg->channel;
     i2s_zero_dma_buffer(i2s_src->i2s_port);
     uint32_t size = audio_element_get_output_ringbuf_size(i2s_src->i2s_reader);

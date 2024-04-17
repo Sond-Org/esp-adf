@@ -60,11 +60,6 @@
 static const char *TAG = "RECORDER_SR";
 
 static const esp_afe_sr_iface_t *esp_afe = &ESP_AFE_SR_HANDLE;
-#if CONFIG_AFE_MIC_NUM == (1)
-#define RECORDER_CHANNEL_NUM (2)
-#else
-#define RECORDER_CHANNEL_NUM (4)
-#endif
 
 #ifdef CONFIG_USE_MULTINET
 static const esp_mn_iface_t *multinet = NULL;
@@ -100,38 +95,46 @@ typedef struct __recorder_sr {
     char                  *mn_language;
 #endif /* CONFIG_USE_MULTINET */
     int8_t                input_order[DAT_CH_MAX];
+    char                  *wn_wakeword;
+    uint8_t               src_ch_num;
 } recorder_sr_t;
 
 static esp_err_t recorder_sr_output(recorder_sr_t *recorder_sr, void *buffer, int len);
 
-static inline int recorder_sr_afe_result_convert(recorder_sr_t *recorder_sr, afe_fetch_result_t *result)
+static recorder_sr_result_t *recorder_sr_afe_result_convert(
+                                                    recorder_sr_t *recorder_sr,
+                                                    afe_fetch_result_t *afe_result,
+                                                    recorder_sr_result_t *sr_result)
 {
-    int ret = SR_RESULT_UNKNOW;
-    ESP_LOGV(TAG, "wake %d, vad %d", result->wakeup_state, result->vad_state);
-    switch (result->wakeup_state) {
+    sr_result->type = SR_RESULT_UNKNOW;
+    ESP_LOGV(TAG, "wake %d, vad %d", afe_result->wakeup_state, afe_result->vad_state);
+    switch (afe_result->wakeup_state) {
         case WAKENET_CHANNEL_VERIFIED:
-            ret = SR_RESULT_VERIFIED;
+            sr_result->type = SR_RESULT_VERIFIED;
             break;
         case WAKENET_NO_DETECT:
             if (recorder_sr->vad_enable) {
-                if (result->vad_state == AFE_VAD_SILENCE) {
-                    ret = SR_RESULT_NOISE;
-                } else if (result->vad_state == AFE_VAD_SPEECH) {
-                    ret = SR_RESULT_SPEECH;
+                if (afe_result->vad_state == AFE_VAD_SILENCE) {
+                    sr_result->type = SR_RESULT_NOISE;
+                } else if (afe_result->vad_state == AFE_VAD_SPEECH) {
+                    sr_result->type = SR_RESULT_SPEECH;
                 } else {
                     ESP_LOGE(TAG, "vad state error");
                 }
             } else {
-                ret = SR_RESULT_SPEECH;
+                sr_result->type = SR_RESULT_SPEECH;
             }
             break;
         case WAKENET_DETECTED:
-            ret = SR_RESULT_WAKEUP;
+            sr_result->type = SR_RESULT_WAKEUP;
+            sr_result->info.wakeup_info.data_volume = afe_result->data_volume;
+            sr_result->info.wakeup_info.wake_word_index = afe_result->wake_word_index;
+            sr_result->info.wakeup_info.wakenet_model_index = afe_result->wakenet_model_index;
             break;
         default:
             break;
     }
-    return ret;
+    return sr_result;
 }
 
 #ifdef CONFIG_USE_MULTINET
@@ -186,7 +189,12 @@ static esp_err_t recorder_mn_detect(recorder_sr_t *recorder_sr, int16_t *buffer,
         if (mn_state == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *mn_result = multinet->get_results(recorder_sr->mn_handle);
             if (recorder_sr->mn_monitor) {
-                recorder_sr->mn_monitor(mn_result->command_id[0], recorder_sr->mn_monitor_ctx);
+                recorder_sr_result_t sr_result = { 0 };
+                sr_result.type = mn_result->command_id[0];
+                sr_result.info.mn_info.phrase_id = mn_result->phrase_id[0];
+                sr_result.info.mn_info.prob = mn_result->prob[0];
+                memcpy(sr_result.info.mn_info.str, mn_result->string, RECORDER_SR_MN_STRING_MAX_LEN);
+                recorder_sr->mn_monitor(&sr_result, recorder_sr->mn_monitor_ctx);
             }
 #if CONFIG_IDF_TARGET_ESP32
             recorder_sr_enable_wakenet_aec(recorder_sr);
@@ -210,7 +218,7 @@ static void feed_task(void *parameters)
 {
     recorder_sr_t *recorder_sr = (recorder_sr_t *)parameters;
     int chunksize = esp_afe->get_feed_chunksize(recorder_sr->afe_handle);
-    int buf_size = chunksize * sizeof(int16_t) * RECORDER_CHANNEL_NUM;
+    int buf_size = chunksize * sizeof(int16_t) * recorder_sr->src_ch_num;
     int16_t *i_buf = audio_calloc(1, buf_size);
     assert(i_buf);
     int16_t *o_buf = audio_calloc(1, buf_size);;
@@ -226,11 +234,17 @@ static void feed_task(void *parameters)
         int ret = recorder_sr->read((char *)i_buf + fill_cnt, buf_size - fill_cnt, recorder_sr->read_ctx, portMAX_DELAY);
         fill_cnt += ret;
         if (fill_cnt == buf_size) {
-#if RECORDER_CHANNEL_NUM == 2
-            ch_sort_16bit_2ch(i_buf, o_buf, fill_cnt, recorder_sr->input_order);
-#else /* RECORDER_CHANNEL_NUM == 2 */
-            ch_sort_16bit_4ch(i_buf, o_buf, fill_cnt, recorder_sr->input_order);
-#endif /* RECORDER_CHANNEL_NUM == 2 */
+            if (recorder_sr->src_ch_num == 1) {
+                memcpy(o_buf, i_buf, fill_cnt);
+            } else if (recorder_sr->src_ch_num == 2) {
+                ch_sort_16bit_2ch(i_buf, o_buf, fill_cnt, recorder_sr->input_order);
+            } else if (recorder_sr->src_ch_num == 4) {
+                ch_sort_16bit_4ch(i_buf, o_buf, fill_cnt, recorder_sr->input_order);
+            } else {
+                ESP_LOGE(TAG, "Not supported source channel number [%d], please check the configuration",
+                        recorder_sr->src_ch_num);
+                goto exit;
+            }
             esp_afe->feed(recorder_sr->afe_handle, o_buf);
             fill_cnt -= buf_size;
         } else if (fill_cnt > buf_size) {
@@ -238,6 +252,7 @@ static void feed_task(void *parameters)
             recorder_sr->feed_running = false;
         }
     }
+exit:
     audio_free(i_buf);
     audio_free(o_buf);
     xEventGroupClearBits(recorder_sr->events, FEED_TASK_RUNNING);
@@ -253,14 +268,17 @@ static void fetch_task(void *parameters)
     while (recorder_sr->fetch_running) {
         xEventGroupWaitBits(recorder_sr->events, FETCH_TASK_RUNNING, false, true, portMAX_DELAY);
 
-        afe_fetch_result_t *res = esp_afe->fetch(recorder_sr->afe_handle);
+        afe_fetch_result_t *afe_result = esp_afe->fetch(recorder_sr->afe_handle);
 #ifdef CONFIG_USE_MULTINET
-        recorder_mn_detect(recorder_sr, res->data, res->wakeup_state);
+        recorder_mn_detect(recorder_sr, afe_result->data, afe_result->wakeup_state);
 #endif
         if (recorder_sr->afe_monitor) {
-            recorder_sr->afe_monitor(recorder_sr_afe_result_convert(recorder_sr, res), recorder_sr->afe_monitor_ctx);
+            recorder_sr_result_t sr_result = {0};
+            recorder_sr->afe_monitor(
+                    recorder_sr_afe_result_convert(recorder_sr, afe_result, &sr_result),
+                    recorder_sr->afe_monitor_ctx);
         }
-        recorder_sr_output(recorder_sr, res->data, res->data_size);
+        recorder_sr_output(recorder_sr, afe_result->data, afe_result->data_size);
     }
     xEventGroupClearBits(recorder_sr->events, FETCH_TASK_RUNNING);
     xEventGroupSetBits(recorder_sr->events, FETCH_TASK_DESTROY);
@@ -524,16 +542,52 @@ recorder_sr_handle_t recorder_sr_create(recorder_sr_cfg_t *cfg, recorder_sr_ifac
     recorder_sr->rb_size          = cfg->rb_size;
     recorder_sr->partition_label  = cfg->partition_label;
     recorder_sr->aec_enable       = cfg->afe_cfg.aec_init;
+    recorder_sr->wn_wakeword      = cfg->wn_wakeword;
 #ifdef CONFIG_USE_MULTINET
     recorder_sr->mn_language      = cfg->mn_language;
 #endif
+    if (cfg->afe_cfg.pcm_config.total_ch_num <= 2) {
+        recorder_sr->src_ch_num = cfg->afe_cfg.pcm_config.total_ch_num;
+    } else if (cfg->afe_cfg.pcm_config.total_ch_num <= 4) {
+        recorder_sr->src_ch_num = 4;
+    } else {
+        ESP_LOGE(TAG, "Channel number [%d] is not supported by esp-sr. Please check your configuration.", cfg->afe_cfg.pcm_config.total_ch_num);
+    }
 
     memcpy(recorder_sr->input_order, cfg->input_order, DAT_CH_MAX);
 
     recorder_sr->models = esp_srmodel_init(recorder_sr->partition_label);
-    char *wn_name = esp_srmodel_filter(recorder_sr->models, ESP_WN_PREFIX, NULL);
-    AUDIO_NULL_CHECK(TAG, wn_name, goto _failed);
+
+    char *wn_name = NULL;
+    char *wn_name_2 = NULL;
+
+    if (recorder_sr->wn_wakeword == NULL) {
+        if (recorder_sr->models!=NULL) {
+            for (int i = 0; i< recorder_sr->models->num; i++) {
+                if (strstr(recorder_sr->models->model_name[i], ESP_WN_PREFIX) != NULL) {
+                    if (wn_name == NULL) {
+                        wn_name = recorder_sr->models->model_name[i];
+                        ESP_LOGI(TAG, "The first wakenet model: %s\n", wn_name);
+                    } else if (wn_name_2 == NULL) {
+                        wn_name_2 = recorder_sr->models->model_name[i];
+                        ESP_LOGI(TAG, "The second wakenet model: %s\n", wn_name_2);
+                    }
+                }
+            }
+        } else {
+            ESP_LOGE(TAG, "Please enable wakenet model and select wake word by menuconfig!\n");
+            goto _failed;
+        }
+    } else {
+        wn_name = esp_srmodel_filter(recorder_sr->models, ESP_WN_PREFIX, recorder_sr->wn_wakeword);
+        if (wn_name == NULL) {
+            ESP_LOGE(TAG, "Please enable wakenet model and select wake word (%s) by menuconfig!", recorder_sr->wn_wakeword);
+            goto _failed;
+        }
+    }
+
     cfg->afe_cfg.wakenet_model_name = wn_name;
+    cfg->afe_cfg.wakenet_model_name_2 = wn_name_2;
     recorder_sr->afe_handle = esp_afe->create_from_config(&cfg->afe_cfg);
     AUDIO_NULL_CHECK(TAG, recorder_sr->afe_handle, goto _failed);
     if (cfg->afe_cfg.wakenet_init == true) {
@@ -592,7 +646,7 @@ esp_err_t recorder_sr_reset_speech_cmd(recorder_sr_handle_t handle, char *comman
 
     esp_mn_commands_clear();
 
-    uint8_t cmd_id = 0;
+    uint16_t cmd_id = 0;
     char *cmd_str = NULL;
     char *phrase = NULL;
     strcpy(buf, command_str);

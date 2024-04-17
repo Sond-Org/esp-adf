@@ -49,6 +49,7 @@ audio_board_handle_t audio_board_init(void)
 audio_hal_handle_t audio_board_adc_init(void)
 {
     audio_hal_codec_config_t audio_codec_cfg = AUDIO_CODEC_DEFAULT_CONFIG();
+    audio_codec_cfg.codec_mode = AUDIO_HAL_CODEC_MODE_ENCODE;
     audio_hal_handle_t adc_hal = NULL;
     adc_hal = audio_hal_init(&audio_codec_cfg, &AUDIO_CODEC_ES7210_DEFAULT_HANDLE);
     AUDIO_NULL_CHECK(TAG, adc_hal, return NULL);
@@ -168,7 +169,7 @@ esp_err_t audio_board_key_init(esp_periph_set_handle_t set)
 esp_err_t audio_board_sdcard_init(esp_periph_set_handle_t set, periph_sdcard_mode_t mode)
 {
     if (mode != SD_MODE_1_LINE) {
-        ESP_LOGE(TAG, "current board only support 1-line SD mode!");
+        ESP_LOGE(TAG, "Current board only support 1-line SD mode!");
         return ESP_FAIL;
     }
     periph_sdcard_cfg_t sdcard_cfg = {

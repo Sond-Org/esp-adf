@@ -26,7 +26,6 @@
 #define _BOARD_PINS_CONFIG_H_
 
 #include "driver/i2c.h"
-#include "driver/i2s.h"
 #include "driver/spi_common.h"
 #include "driver/spi_master.h"
 #include "driver/spi_slave.h"
@@ -34,6 +33,17 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief                  Board i2s pin definition
+ */
+typedef struct {
+    int mck_io_num;         /*!< MCK pin, output */
+    int bck_io_num;         /*!< BCK pin, input in slave role, output in master role */
+    int ws_io_num;          /*!< WS pin, input in slave role, output in master role */
+    int data_out_num;       /*!< DATA pin, output */
+    int data_in_num;        /*!< DATA pin, input */
+} board_i2s_pin_t;
 
 /**
  * @brief                  Get i2c pins configuration
@@ -57,7 +67,7 @@ esp_err_t get_i2c_pins(i2c_port_t port, i2c_config_t *i2c_config);
  *     - ESP_OK
  *     - ESP_FAIL
  */
-esp_err_t get_i2s_pins(i2s_port_t port, i2s_pin_config_t *i2s_config);
+esp_err_t get_i2s_pins(int port, board_i2s_pin_t *i2s_config);
 
 /**
  * @brief                  Get spi pins configuration
@@ -70,22 +80,6 @@ esp_err_t get_i2s_pins(i2s_port_t port, i2s_pin_config_t *i2s_config);
  *     - ESP_FAIL
  */
 esp_err_t get_spi_pins(spi_bus_config_t *spi_config, spi_device_interface_config_t *spi_device_interface_config);
-
-/**
- * @brief Set i2s mclk output pin
- *
- * @note GPIO1 and GPIO3 default are UART pins.
- *
- * @param i2s_num       i2s port index
- * @param gpio_num      gpio number index, only support GPIO0, GPIO1 and GPIO3.
-
- * @return
- *     - ESP_OK                     Success
- *     - ESP_ERR_INVALID_ARG        Parameter error
- *     - ESP_ERR_INVALID_STATE      Driver state error
- *     - ESP_ERR_ADF_NOT_SUPPORT    Not support
- */
-esp_err_t i2s_mclk_gpio_select(i2s_port_t i2s_num, gpio_num_t gpio_num);
 
 /**
  * @brief  Get the gpio number for sdcard interrupt
@@ -102,6 +96,14 @@ int8_t get_sdcard_intr_gpio(void);
  *          Others  max num
  */
 int8_t get_sdcard_open_file_num_max(void);
+
+/**
+ * @brief  Get the gpio number for sdcard power control
+ *
+ * @return  -1      error
+ *          Others  SDCard power GPIO
+ */
+int8_t get_sdcard_power_ctrl_gpio(void);
 
 /**
  * @brief  Get the gpio number for auxin detection

@@ -54,6 +54,12 @@
 #define RECORDER_READ_FIN (BIT6)
 #define RECORDER_TASK_FIN (BIT7)
 
+#if CONFIG_IDF_TARGET_ESP32S3
+#define CONFIG_AFE_MIC_NUM (2)
+#else
+#define CONFIG_AFE_MIC_NUM (1)
+#endif
+
 enum _rec_msg_id {
     REC_START = 1,
     REC_STOP,
@@ -205,9 +211,9 @@ static int input_1ch_for_encoder(int16_t *buffer, int buf_sz, void *user_ctx)
     return buf_sz;
 }
 
-static esp_err_t recorder_event_cb(audio_rec_evt_t type, void *user_data)
+static esp_err_t recorder_event_cb(audio_rec_evt_t *event, void *user_data)
 {
-    switch (type) {
+    switch (event->type) {
         case AUDIO_REC_WAKEUP_START: {
             ESP_LOGI(TAG, "recorder_event_cb - REC_EVENT_WAKEUP_START");
             xEventGroupSetBits(events, SR_WAKEUP);
@@ -237,8 +243,8 @@ static esp_err_t recorder_event_cb(audio_rec_evt_t type, void *user_data)
             break;
         }
         default: {
-            if (type >= AUDIO_REC_COMMAND_DECT) {
-                ESP_LOGW(TAG, "recorder_event_cb - Command %d", type);
+            if (event->type >= AUDIO_REC_COMMAND_DECT) {
+                ESP_LOGW(TAG, "recorder_event_cb - Command %d", event->type);
                 xEventGroupSetBits(events, SR_CMD);
             }
             break;

@@ -133,7 +133,7 @@ int renderer_request(esp_dlna_handle_t dlna, const upnp_attr_t *attr, int attr_n
             return 0;
         case AVT_SEEK:
             sscanf(buffer, "%d:%d:%d", &hour, &min, &sec);
-            tmp_data = hour*3600 + min*60 + sec;
+            tmp_data = hour * 3600 + min * 60 + sec;
             ESP_LOGI(TAG, "Seekto %d s", tmp_data);
             esp_audio_seek(player, tmp_data);
             return 0;
@@ -248,9 +248,10 @@ static void audio_player_init(void)
     i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
     i2s_writer.type = AUDIO_STREAM_WRITER;
     i2s_writer.stack_in_ext = true;
-    i2s_writer.i2s_config.sample_rate = 48000;
     i2s_writer.task_core = 1;
-    esp_audio_output_stream_add(player, i2s_stream_init(&i2s_writer));
+    audio_element_handle_t i2s_stream_writer = i2s_stream_init(&i2s_writer);
+    i2s_stream_set_clk(i2s_stream_writer, 48000, 16, 2);
+    esp_audio_output_stream_add(player, i2s_stream_writer);
 
     // Set default volume
     esp_audio_vol_set(player, 35);
@@ -326,8 +327,8 @@ void app_main()
     esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
     esp_periph_set_handle_t set = esp_periph_set_init(&periph_cfg);
     periph_wifi_cfg_t wifi_cfg = {
-        .ssid = "ESP-Audio",
-        .password = "esp123456",
+        .wifi_config.sta.ssid = "YOUR_SSID",
+        .wifi_config.sta.password = "YOUR_PASSWORD",
     };
     esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
     esp_periph_start(set, wifi_handle);

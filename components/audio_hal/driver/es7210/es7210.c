@@ -63,6 +63,7 @@ audio_hal_func_t AUDIO_CODEC_ES7210_DEFAULT_HANDLE = {
     .audio_codec_config_iface = es7210_adc_config_i2s,
     .audio_codec_set_mute = es7210_set_mute,
     .audio_codec_set_volume = es7210_adc_set_volume,
+    .audio_codec_enable_pa = NULL,
     .audio_hal_lock = NULL,
     .handle = NULL,
 };
@@ -552,8 +553,16 @@ esp_err_t es7210_adc_set_volume(int volume)
 
 esp_err_t es7210_set_mute(bool enable)
 {
-    ESP_LOGD(TAG, "ES7210 SetMute :%d", enable);
-    return ESP_OK;
+    int ret = 0;
+    if (enable) {
+        ret |= es7210_update_reg_bit(0x14, 0x03, 0x03);
+        ret |= es7210_update_reg_bit(0x15, 0x03, 0x03);
+    } else {
+        ret |= es7210_update_reg_bit(0x14, 0x03, 0x00);
+        ret |= es7210_update_reg_bit(0x15, 0x03, 0x00);
+    }
+    ESP_LOGI(TAG, "%s", enable ? "Muted" : "Unmuted");
+    return ret == 0 ? ESP_OK : ESP_FAIL;
 }
 
 void es7210_read_all(void)

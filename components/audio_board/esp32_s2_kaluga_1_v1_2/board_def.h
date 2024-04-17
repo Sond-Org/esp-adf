@@ -55,13 +55,27 @@
 
 
 /**
+ * @brief SDCARD Function Definition
+ */
+#define FUNC_SDCARD_EN             (0)
+#define SDCARD_OPEN_FILE_NUM_MAX    5
+#define SDCARD_INTR_GPIO            -1
+#define SDCARD_PWR_CTRL             -1
+
+#define ESP_SD_PIN_CLK              -1
+#define ESP_SD_PIN_CMD              -1
+#define ESP_SD_PIN_D0               -1
+#define ESP_SD_PIN_D3               -1
+
+
+/**
  * @brief Audio Codec Chip Function Definition
  */
 #define FUNC_AUDIO_CODEC_EN         (1)
 #define PA_ENABLE_GPIO              10
 #define ES8311_MCLK_SOURCE          1   /* 0 From MCLK, 1 From BCLK */
 #define CODEC_ADC_I2S_PORT         (0)
-#define CODEC_ADC_BITS_PER_SAMPLE  I2S_BITS_PER_SAMPLE_16BIT
+#define CODEC_ADC_BITS_PER_SAMPLE  (16) /* 16bit */
 #define CODEC_ADC_SAMPLE_RATE      (48000)
 #define RECORD_HARDWARE_AEC        (false)
 #define BOARD_PA_GAIN              (0) /* Power amplifier gain defined by board (dB) */

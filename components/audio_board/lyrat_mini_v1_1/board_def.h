@@ -33,6 +33,11 @@
 #define SDCARD_INTR_GPIO          GPIO_NUM_34
 #define SDCARD_PWR_CTRL           GPIO_NUM_13
 
+#define ESP_SD_PIN_CLK            GPIO_NUM_14
+#define ESP_SD_PIN_CMD            GPIO_NUM_15
+#define ESP_SD_PIN_D0             GPIO_NUM_2
+#define ESP_SD_PIN_D3             -1
+
 
 /**
  * @brief LED Function Definition
@@ -51,7 +56,7 @@
 #define PA_ENABLE_GPIO            GPIO_NUM_21
 #define ES8311_MCLK_SOURCE        0   /* 0 From MCLK of esp32   1 From BCLK */
 #define CODEC_ADC_I2S_PORT        (1)
-#define CODEC_ADC_BITS_PER_SAMPLE I2S_BITS_PER_SAMPLE_16BIT
+#define CODEC_ADC_BITS_PER_SAMPLE (16) /* 16bit */
 #define CODEC_ADC_SAMPLE_RATE     (16000)
 #define RECORD_HARDWARE_AEC       (true)
 #define BOARD_PA_GAIN             (20) /* Power amplifier gain defined by board (dB) */

@@ -20,6 +20,7 @@
 #include "esp_peripherals.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "esp_wifi.h"
 #include "periph_sdcard.h"
 #include "periph_wifi.h"
 
@@ -118,6 +119,7 @@ write_flash:
         ESP_LOGE(TAG, "Erase [%s] failed and return %d", node->label, err);
         return OTA_SERV_ERR_REASON_PARTITION_WT_FAIL;
     }
+    ota_data_partition_erase_mark(handle);
     ota_data_partition_write(handle, (char *)&incoming_header, sizeof(flash_tone_header_t));
     if (need_write_desc) {
         ota_data_partition_write(handle, (char *)&incoming_desc, sizeof(esp_app_desc_t));
@@ -161,12 +163,13 @@ void app_main()
 
     ESP_LOGI(TAG, "[1.1] Start and wait for Wi-Fi network");
     periph_wifi_cfg_t wifi_cfg = {
-        .ssid = CONFIG_WIFI_SSID,
-        .password = CONFIG_WIFI_PASSWORD,
+        .wifi_config.sta.ssid = CONFIG_WIFI_SSID,
+        .wifi_config.sta.password = CONFIG_WIFI_PASSWORD,
     };
     esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
     esp_periph_start(set, wifi_handle);
     periph_wifi_wait_for_connected(wifi_handle, portMAX_DELAY);
+    esp_wifi_set_ps(WIFI_PS_NONE);
 
     ESP_LOGI(TAG, "[1.2] Mount SDCard");
     audio_board_sdcard_init(set, SD_MODE_1_LINE);

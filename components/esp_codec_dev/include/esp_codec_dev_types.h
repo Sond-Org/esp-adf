@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define ESP_CODEC_DEV_VERSION  "1.0.1"
+#define ESP_CODEC_DEV_VERSION  "1.1.0"
 
 /**
  * @brief Define error number of codec device module
@@ -30,6 +30,8 @@ extern "C" {
 #define ESP_CODEC_DEV_WRITE_FAIL  (0x10D)
 #define ESP_CODEC_DEV_READ_FAIL   (0x10E)
 
+#define ESP_CODEC_DEV_MAKE_CHANNEL_MASK(channel) ((uint16_t)1 << (channel))
+
 /**
  * @brief Codec Device type
  */
@@ -42,11 +44,20 @@ typedef enum {
 
 /**
  * @brief Codec audio sample information
+ *        Notes: channel_mask is used to filter wanted channels in driver side
+ *               when set to 0, default filter all channels
+ *               when channel is 2, can filter channel 0 (set to 1) or channel 1 (set to 2)
+ *               when channel is 4, can filter either 3,2 channels or 1 channel
  */
 typedef struct {
-    uint8_t  bits_per_sample; /*!< Bit lengths of one channel data */
-    uint8_t  channel;         /*!< Channels of sample */
-    uint32_t sample_rate;     /*!< Sample rate of sample */
+    uint8_t  bits_per_sample;   /*!< Bit lengths of one channel data */
+    uint8_t  channel;           /*!< Channels of sample */
+    uint16_t channel_mask;      /*!< Channel mask indicate which channel to be selected */
+    uint32_t sample_rate;       /*!< Sample rate of sample */
+    int mclk_multiple;          /*!< The multiple of MCLK to the sample rate
+                                     If value is 0, mclk = sample_rate * 256
+                                     If bits_per_sample is 24bit, mclk_multiple should be the multiple of 3
+                                */
 } esp_codec_dev_sample_info_t;
 
 /**

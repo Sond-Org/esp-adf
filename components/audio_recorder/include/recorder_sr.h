@@ -39,7 +39,7 @@ extern "C" {
 #define FETCH_TASK_STACK_SZ      (5 * 1024)
 #define FEED_TASK_PRIO           (5)
 #define FETCH_TASK_PRIO          (5)
-#define FEED_TASK_PINNED_CORE    (1)
+#define FEED_TASK_PINNED_CORE    (0)
 #define FETCH_TASK_PINNED_CORE   (1)
 #define SR_OUTPUT_RB_SIZE        (6 * 1024)
 
@@ -64,16 +64,17 @@ typedef struct {
     int          rb_size;                               /*!< Ringbuffer size of recorder sr */
     char         *partition_label;                      /*!< Partition label which stored the model data */
     char         *mn_language;                          /*!< Command language for multinet to load */
+    char         *wn_wakeword;                          /*!< Wake Word for WakeNet to load. This is useful when multiple Wake Words are selected in sdkconfig. Setting this to NULL will use the first found model. */
 } recorder_sr_cfg_t;
 
-#if CONFIG_AFE_MIC_NUM == (1)
+#if CONFIG_IDF_TARGET_ESP32
 #define INPUT_ORDER_DEFAULT() { \
         DAT_CH_1,               \
         DAT_CH_0,               \
         DAT_CH_IDLE,            \
         DAT_CH_IDLE,            \
     }
-#elif CONFIG_AFE_MIC_NUM == (2)
+#elif CONFIG_IDF_TARGET_ESP32S3
 #define INPUT_ORDER_DEFAULT() { \
         DAT_CH_2,               \
         DAT_CH_0,               \
@@ -99,6 +100,7 @@ typedef struct {
     .rb_size          = SR_OUTPUT_RB_SIZE,      \
     .partition_label  = "model",                \
     .mn_language      = ESP_MN_CHINESE,         \
+    .wn_wakeword      = NULL,                   \
 };
 
 /**

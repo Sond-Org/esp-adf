@@ -90,7 +90,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "[2.2] Create i2s stream to write data to codec chip");
 #if defined CONFIG_ESP32_C3_LYRA_V2_BOARD
-    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_TX_PDM_CFG_DEFAULT();
+    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_PDM_TX_CFG_DEFAULT();
 #else
     i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
 #endif
@@ -117,8 +117,8 @@ void app_main(void)
     esp_periph_config_t periph_cfg = DEFAULT_ESP_PERIPH_SET_CONFIG();
     esp_periph_set_handle_t set = esp_periph_set_init(&periph_cfg);
     periph_wifi_cfg_t wifi_cfg = {
-        .ssid = CONFIG_WIFI_SSID,
-        .password = CONFIG_WIFI_PASSWORD,
+        .wifi_config.sta.ssid = CONFIG_WIFI_SSID,
+        .wifi_config.sta.password = CONFIG_WIFI_PASSWORD,
     };
     esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
     esp_periph_start(set, wifi_handle);

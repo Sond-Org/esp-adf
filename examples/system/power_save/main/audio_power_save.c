@@ -7,6 +7,7 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 
+#include "string.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_wifi.h"
@@ -23,8 +24,11 @@
 #include "audio_mem.h"
 #include "audio_sleep_wakeup.h"
 
-// If you just want to get the data of wifi low power, you should set to 1
-#define WIFI_POWER_SAVE_TEST      0
+// If you just want to get the data of wifi low power, you can enable it
+#define WIFI_POWER_SAVE_TEST           0
+
+// If you just want to test the wakeup source in light sleep, you can enable it
+#define LIGHT_SLEEP_WAKEUP_SOURCE      1
 
 static const char* TAG = "AUDIO_POWER_SAVE";
 
@@ -191,10 +195,10 @@ void wifi_low_power_test(void)
     set = esp_periph_set_init(&periph_cfg);
     ESP_LOGI(TAG, "Start and wait for Wi-Fi network");
     periph_wifi_cfg_t wifi_cfg = {
-        .ssid = CONFIG_EXAMPLE_WIFI_SSID,
-        .password = CONFIG_EXAMPLE_WIFI_PASSWORD,
         .disable_auto_reconnect = false,
-        .reconnect_timeout_ms = 100
+        .reconnect_timeout_ms = 100,
+        .wifi_config.sta.ssid = CONFIG_EXAMPLE_WIFI_SSID,
+        .wifi_config.sta.password = CONFIG_EXAMPLE_WIFI_PASSWORD,
     };
     wifi_handle = periph_wifi_init(&wifi_cfg);
     // Please place it between periph_wifi_init() and esp_periph_start()
@@ -219,12 +223,13 @@ void wifi_low_power_test(void)
 void app_main(void)
 {
     get_wakeup_cause();
-    esp_log_level_set("*", ESP_LOG_ERROR);
-    esp_log_level_set("AUDIO_SLEEP_WAKEUP", ESP_LOG_INFO);
 
 #if WIFI_POWER_SAVE_TEST
     wifi_low_power_test();
 #endif
+
+    esp_log_level_set("*", ESP_LOG_ERROR);
+    esp_log_level_set("AUDIO_SLEEP_WAKEUP", ESP_LOG_INFO);
 
     ESP_ERROR_CHECK(nvs_flash_init());
 #if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 1, 0))
@@ -237,10 +242,10 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Init Wi-Fi network");
     periph_wifi_cfg_t wifi_cfg = {
-        .ssid = CONFIG_EXAMPLE_WIFI_SSID,
-        .password = CONFIG_EXAMPLE_WIFI_PASSWORD,
         .disable_auto_reconnect = false,
-        .reconnect_timeout_ms = 100
+        .reconnect_timeout_ms = 100,
+        .wifi_config.sta.ssid = CONFIG_EXAMPLE_WIFI_SSID,
+        .wifi_config.sta.password = CONFIG_EXAMPLE_WIFI_PASSWORD,
     };
     wifi_handle = periph_wifi_init(&wifi_cfg);
     // Please place it between periph_wifi_init() and esp_periph_start()
@@ -249,6 +254,7 @@ void app_main(void)
     int count = 4;
 
     for (int i = 0; i < count; i++) {
+#if !LIGHT_SLEEP_WAKEUP_SOURCE
         audio_init();
         wifi_power_save_init(set, wifi_handle);
         audio_run();
@@ -261,6 +267,11 @@ void app_main(void)
         audio_deinit();
         // Shut down the power amplifier for the purpose of eliminating noise.
         gpio_set_level(get_pa_enable_gpio(), 0);
+#else
+        count = 40;
+        // Some task to do
+        vTaskDelay(1000 / portTICK_RATE_MS);
+#endif
         enter_power_manage();
     }
 

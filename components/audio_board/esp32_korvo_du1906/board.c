@@ -62,7 +62,6 @@ audio_hal_handle_t audio_board_dac_init(void)
     dac_hal = audio_hal_init(&audio_codec_cfg, &AUDIO_CODEC_TAS5805M_DEFAULT_HANDLE);
 #elif CONFIG_ESP32_KORVO_DU1906_DAC_ES7148
     dac_hal = audio_hal_init(&audio_codec_cfg, &AUDIO_CODEC_ES7148_DEFAULT_HANDLE);
-    i2s_mclk_gpio_select(I2S_NUM_0, GPIO_NUM_0);
 #endif
 
     AUDIO_NULL_CHECK(TAG, dac_hal, return NULL);
@@ -122,7 +121,7 @@ esp_err_t audio_board_key_init(esp_periph_set_handle_t set)
 esp_err_t audio_board_sdcard_init(esp_periph_set_handle_t set, periph_sdcard_mode_t mode)
 {
     if (mode != SD_MODE_1_LINE) {
-        ESP_LOGE(TAG, "current board only support 1-line SD mode!");
+        ESP_LOGE(TAG, "Current board only support 1-line SD mode!");
         return ESP_FAIL;
     }
     periph_sdcard_cfg_t sdcard_cfg = {

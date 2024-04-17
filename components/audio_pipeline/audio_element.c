@@ -789,9 +789,11 @@ esp_err_t audio_element_set_input_ringbuf(audio_element_handle_t el, ringbuf_han
 {
     if (rb) {
         el->in.input_rb = rb;
+        rb_set_reader_holder(rb, (void*)el);
         el->read_type = IO_TYPE_RB;
     } else if (el->read_type == IO_TYPE_RB) {
         el->in.input_rb = rb;
+        rb_set_reader_holder(rb, (void*)el);
     }
     return ESP_OK;
 }
@@ -810,8 +812,10 @@ esp_err_t audio_element_set_output_ringbuf(audio_element_handle_t el, ringbuf_ha
     if (rb) {
         el->out.output_rb = rb;
         el->write_type = IO_TYPE_RB;
+        rb_set_writer_holder(rb, (void*)el);
     } else if (el->write_type == IO_TYPE_RB) {
         el->out.output_rb = rb;
+        rb_set_writer_holder(rb, (void*)el);
     }
     return ESP_OK;
 }
@@ -1247,7 +1251,7 @@ esp_err_t audio_element_stop(audio_element_handle_t el)
     if (el->is_running == false) {
         xEventGroupSetBits(el->state_event, STOPPED_BIT);
         audio_element_report_status(el, AEL_STATUS_STATE_STOPPED);
-        ESP_LOGE(TAG, "[%s] Element already stopped", el->tag);
+        ESP_LOGW(TAG, "[%s] Element already stopped", el->tag);
         return ESP_OK;
     }
     audio_element_abort_output_ringbuf(el);
@@ -1290,12 +1294,12 @@ esp_err_t audio_element_wait_for_stop_ms(audio_element_handle_t el, TickType_t t
     return ret;
 }
 
-esp_err_t audio_element_multi_input(audio_element_handle_t el, char *buffer, int wanted_size, int index, TickType_t ticks_to_wait)
+int audio_element_multi_input(audio_element_handle_t el, char *buffer, int wanted_size, int index, TickType_t ticks_to_wait)
 {
-    esp_err_t ret = ESP_OK;
+    int ret = ESP_OK;
     if (index >= el->multi_in.max_rb_num) {
         ESP_LOGE(TAG, "The index of ringbuffer is gather than and equal to ringbuffer maximum (%d). line %d", el->multi_in.max_rb_num, __LINE__);
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_SIZE;
     }
     if (el->multi_in.rb[index]) {
         ret = rb_read(el->multi_in.rb[index], buffer, wanted_size, ticks_to_wait);
@@ -1303,9 +1307,9 @@ esp_err_t audio_element_multi_input(audio_element_handle_t el, char *buffer, int
     return ret;
 }
 
-esp_err_t audio_element_multi_output(audio_element_handle_t el, char *buffer, int wanted_size, TickType_t ticks_to_wait)
+int audio_element_multi_output(audio_element_handle_t el, char *buffer, int wanted_size, TickType_t ticks_to_wait)
 {
-    esp_err_t ret = ESP_OK;
+    int ret = ESP_OK;
     for (int i = 0; i < el->multi_out.max_rb_num; ++i) {
         if (el->multi_out.rb[i]) {
             ret |= rb_write(el->multi_out.rb[i], buffer, wanted_size, ticks_to_wait);

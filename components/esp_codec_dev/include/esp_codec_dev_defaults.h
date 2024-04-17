@@ -26,6 +26,9 @@
 #ifdef CONFIG_CODEC_ES8156_SUPPORT
 #include "es8156_dac.h"
 #endif
+#ifdef CONFIG_CODEC_AW88298_SUPPORT
+#include "aw88298_dac.h"
+#endif
 #ifdef CONFIG_CODEC_ES8374_SUPPORT
 #include "es8374_codec.h"
 #endif
@@ -74,7 +77,7 @@ typedef struct {
  * @return        NULL: Failed
  *                Others: Codec GPIO interface
  */
-const audio_codec_gpio_if_t *audio_codec_new_gpio();
+const audio_codec_gpio_if_t *audio_codec_new_gpio(void);
 
 /**
  * @brief         Get default SPI control interface

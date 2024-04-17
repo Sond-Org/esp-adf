@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
+#include "string.h"
 
 #include "esp_peripherals.h"
 #include "periph_is31fl3216.h"
@@ -48,8 +49,8 @@ static void setup_wifi(esp_periph_set_handle_t set)
     ESP_LOGI(TAG, "Start Wi-Fi");
     periph_wifi_cfg_t wifi_cfg = {
         .disable_auto_reconnect = true,
-        .ssid = CONFIG_WIFI_SSID,
-        .password = CONFIG_WIFI_PASSWORD,
+        .wifi_config.sta.ssid = CONFIG_WIFI_SSID,
+        .wifi_config.sta.password = CONFIG_WIFI_PASSWORD,
     };
     esp_periph_handle_t wifi_handle = periph_wifi_init(&wifi_cfg);
     esp_periph_start(set, wifi_handle);
@@ -207,10 +208,9 @@ static void setup_player(esp_periph_set_handle_t set)
     esp_audio_codec_lib_add(player, AUDIO_CODEC_TYPE_DECODER, esp_decoder_init(&auto_dec_cfg, auto_decode, 10));
 
     i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
-    i2s_writer.i2s_config.sample_rate = 48000;
-    i2s_writer.i2s_config.mode = I2S_MODE_MASTER | I2S_MODE_TX;
     i2s_writer.type = AUDIO_STREAM_WRITER;
     i2s_h = i2s_stream_init(&i2s_writer);
+    i2s_stream_set_clk(i2s_h, 48000, 16, 2);
     esp_audio_output_stream_add(player, i2s_h);
 
     // Set default volume
@@ -240,14 +240,14 @@ static int _mrm_event_handler(mrm_event_msg_t *event, void *ctx)
             break;
         case MRM_EVENT_SYNC_FAST:
             sync = *(int *)event->data;
-            if (sync < -200){
+            if (sync < -200) {
                 sync = -200;
             }
             i2s_stream_sync_delay(i2s_h, sync);
             break;
         case MRM_EVENT_SYNC_SLOW:
             sync = *(int *)event->data;
-            if (sync > 200){
+            if (sync > 200) {
                 sync = 200;
             }
             i2s_stream_sync_delay(i2s_h, sync);
