@@ -663,7 +663,12 @@ static void cli_setup_player(void)
     // Create writers and add to esp_audio
     fatfs_stream_cfg_t fs_writer = FATFS_STREAM_CFG_DEFAULT();
     fs_writer.type = AUDIO_STREAM_WRITER;
-    i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
+
+    // TODO: here changed the i2s writer 
+    //i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
+    //i2s_writer.type = AUDIO_STREAM_WRITER;
+
+    i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT_WITH_PARA(I2S_NUM_0, 48000, I2S_DATA_BIT_WIDTH_16BIT, AUDIO_STREAM_WRITER);
     i2s_writer.type = AUDIO_STREAM_WRITER;
 
     raw_stream_cfg_t raw_writer = RAW_STREAM_CFG_DEFAULT();
@@ -676,7 +681,7 @@ static void cli_setup_player(void)
     esp_audio_output_stream_add(player, raw_stream_init(&raw_writer));
 
     // Set default volume
-    esp_audio_vol_set(player, 35);
+    esp_audio_vol_set(player, 85);
     AUDIO_MEM_SHOW(TAG);
     ESP_LOGI(TAG, "esp_audio instance is:%p\r\n", player);
 }

@@ -1,0 +1,15 @@
+menu "Audio Board"
+
+choice CUSTOMER_AUDIO_BOARD
+    prompt "Custom audio board"
+    default SOND_BOARD
+    help
+        Select an audio board to use with the ESP-ADF
+
+config SOND_BOARD
+    bool "SOND board"
+
+endchoice
+
+endmenu
+
