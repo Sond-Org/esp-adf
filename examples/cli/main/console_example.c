@@ -56,6 +56,45 @@
 
 // #define  ESP_AUDIO_AUTO_PLAY
 
+#define I2S_STREAM_CFG_DEFAULT_WITH_PARA(port, rate, bits, stream_type)  {      \
+    .type = stream_type,                                                        \
+    .transmit_mode = I2S_COMM_MODE_STD,                                         \
+    .chan_cfg = {                                                               \
+        .id = port,                                                             \
+        .role = I2S_ROLE_MASTER,                                                \
+        .dma_desc_num = 3,                                                      \
+        .dma_frame_num = 312,                                                   \
+        .auto_clear = true,                                                     \
+    },                                                                          \
+    .std_cfg = {                                                                \
+        .clk_cfg  ={ \
+            .sample_rate_hz = rate, \
+            .clk_src = I2S_CLK_SRC_APLL, \
+            .mclk_multiple = I2S_MCLK_MULTIPLE_256, \
+        }, \
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(bits, I2S_SLOT_MODE_STEREO),  \
+        .gpio_cfg = {                                                           \
+            .invert_flags = {                                                   \
+                .mclk_inv = false,                                              \
+                .bclk_inv = false,                                              \
+            },                                                                  \
+        },                                                                      \
+    },                                                                          \
+    .expand_src_bits = I2S_DATA_BIT_WIDTH_16BIT,                                \
+    .use_alc = false,                                                           \
+    .volume = 0,                                                                \
+    .out_rb_size = I2S_STREAM_RINGBUFFER_SIZE,                                  \
+    .task_stack = I2S_STREAM_TASK_STACK,                                        \
+    .task_core = I2S_STREAM_TASK_CORE,                                          \
+    .task_prio = I2S_STREAM_TASK_PRIO,                                          \
+    .stack_in_ext = false,                                                      \
+    .multi_out_num = 0,                                                         \
+    .uninstall_drv = true,                                                      \
+    .need_expand = false,                                                       \
+    .buffer_len = I2S_STREAM_BUF_SIZE,                                          \
+}
+
+
 static const char *TAG = "CONSOLE_EXAMPLE";
 static esp_audio_handle_t               player;
 static esp_periph_set_handle_t          set;
@@ -439,7 +478,7 @@ static esp_err_t cli_get_mp3_id3_info(esp_periph_handle_t periph, int argc, char
         id3_info = esp_decoder_get_id3_info(mp3_el);
 #else
         id3_info = mp3_decoder_get_id3_info(mp3_el);
-#endif        
+#endif
         if(id3_info) {
             ESP_LOGI(TAG, "ID3 information obtained successfully.");
             esp_id3_free((esp_id3_info_t**)&id3_info);
@@ -597,17 +636,19 @@ static void cli_setup_player(void)
     // Create readers and add to esp_audio
     fatfs_stream_cfg_t fs_reader = FATFS_STREAM_CFG_DEFAULT();
     fs_reader.type = AUDIO_STREAM_READER;
-    i2s_stream_cfg_t i2s_reader = I2S_STREAM_CFG_DEFAULT();
-    i2s_reader.type = AUDIO_STREAM_READER;
+    // i2s_stream_cfg_t i2s_reader = I2S_STREAM_CFG_DEFAULT();
+    // i2s_reader.type = AUDIO_STREAM_READER;
     raw_stream_cfg_t raw_reader = RAW_STREAM_CFG_DEFAULT();
     raw_reader.type = AUDIO_STREAM_READER;
 
-    audio_element_handle_t i2s_read_h = i2s_stream_init(&i2s_reader);
-    i2s_stream_set_clk(i2s_read_h, 48000, 16, 2);
+    // audio_element_handle_t i2s_read_h = i2s_stream_init(&i2s_reader);
+    // i2s_stream_set_clk(i2s_read_h, 48000, 16, 2);
     esp_audio_input_stream_add(player, raw_stream_init(&raw_reader));
     esp_audio_input_stream_add(player, fatfs_stream_init(&fs_reader));
-    esp_audio_input_stream_add(player, i2s_read_h);
+    // esp_audio_input_stream_add(player, i2s_read_h);
     http_stream_cfg_t http_cfg = HTTP_STREAM_CFG_DEFAULT();
+    http_cfg.out_rb_size = 60 * 1024;
+    http_cfg.auto_connect_next_track = true;
     http_cfg.event_handle = _http_stream_event_handle;
     http_cfg.type = AUDIO_STREAM_READER;
     http_cfg.enable_playlist_parser = true;
@@ -664,18 +705,18 @@ static void cli_setup_player(void)
     fatfs_stream_cfg_t fs_writer = FATFS_STREAM_CFG_DEFAULT();
     fs_writer.type = AUDIO_STREAM_WRITER;
 
-    // TODO: here changed the i2s writer 
-    //i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
-    //i2s_writer.type = AUDIO_STREAM_WRITER;
+    // TODO: here changed the i2s writer
+    // i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT();
+    // i2s_writer.type = AUDIO_STREAM_WRITER;
 
-    i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT_WITH_PARA(I2S_NUM_0, 48000, I2S_DATA_BIT_WIDTH_16BIT, AUDIO_STREAM_WRITER);
+    i2s_stream_cfg_t i2s_writer = I2S_STREAM_CFG_DEFAULT_WITH_PARA(I2S_NUM_0, 47998, I2S_DATA_BIT_WIDTH_16BIT, AUDIO_STREAM_WRITER);
     i2s_writer.type = AUDIO_STREAM_WRITER;
 
     raw_stream_cfg_t raw_writer = RAW_STREAM_CFG_DEFAULT();
     raw_writer.type = AUDIO_STREAM_WRITER;
     audio_element_handle_t i2s_h =  i2s_stream_init(&i2s_writer);
 
-    i2s_stream_set_clk(i2s_h, 48000, 16, 2);
+    // i2s_stream_set_clk(i2s_h, 48000, 16, 2);
     esp_audio_output_stream_add(player, i2s_h);
     esp_audio_output_stream_add(player, fatfs_stream_init(&fs_writer));
     esp_audio_output_stream_add(player, raw_stream_init(&raw_writer));
