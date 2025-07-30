@@ -30,7 +30,7 @@
 
 static char *TAG = "duer_wifi_cfg_dummy";
 
-int duer_ble_send_data(uint8_t *data, uint32_t data_len, uint16_t attr_id)
+int duer_ble_send_data(uint8_t *data, size_t data_len, uint16_t attr_id)
 {
     ESP_LOGE(TAG, "[%s]: Please enable ble in sdkconfig", __func__);
     return -1;
