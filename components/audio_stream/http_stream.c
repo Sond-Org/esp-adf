@@ -579,7 +579,7 @@ _stream_open_begin:
             .url = uri,
             .event_handler = _http_event_handle,
             .user_data = self,
-            .timeout_ms = 30 * 1000,
+            .timeout_ms = 20 * 1000,
             .buffer_size = HTTP_STREAM_BUFFER_SIZE,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 1, 0)
             .buffer_size_tx = 2024,
