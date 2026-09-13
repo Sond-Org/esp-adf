@@ -60,6 +60,10 @@ static const char *TAG = "HTTP_STREAM";
 #define MAX_PLAYLIST_LINE_SIZE (512)
 #define HTTP_STREAM_BUFFER_SIZE (3072)
 #define HTTP_MAX_CONNECT_TIMES  (5)
+// Sond: after a connection loss, keep retrying the reconnect for this long (WiFi can take several seconds
+// to come back after a drop) before failing the stream.
+#define HTTP_RECONNECT_WINDOW_MS       (60 * 1000)
+#define HTTP_RECONNECT_RETRY_DELAY_MS  (2000)
 
 #define HLS_PREFER_BITRATE      (200*1024)
 #define HLS_KEY_CACHE_SIZE      (32)
@@ -728,6 +732,14 @@ static int _http_read(audio_element_handle_t self, char *buffer, int len, TickTy
     if (rlen <= 0) {
         http->_errno = esp_http_client_get_errno(http->client);
         ESP_LOGW(TAG, "No more data,errno:%d, total_bytes:%llu, rlen = %d", http->_errno, info.byte_pos, rlen);
+        // Sond: a plain file whose body stops short of its Content-Length lost the connection (a WiFi drop can
+        // end the TLS session with errno 0). Report it as a reset so _http_process reconnects from byte_pos
+        // instead of finishing the track early.
+        if (http->_errno == 0 && info.total_bytes > 0 && info.byte_pos < info.total_bytes
+            && http->request_range_size == 0 && http->is_playlist_resolved == false && http->hls_key == NULL) {
+            ESP_LOGW(TAG, "Body ended at %lld of %lld bytes, reconnecting", (long long)info.byte_pos, (long long)info.total_bytes);
+            http->_errno = ECONNRESET;
+        }
         if (http->_errno != 0) {  // Error occuered, reset connection
             ESP_LOGW(TAG, "Got %d errno(%s)", http->_errno, strerror(http->_errno));
             return http->_errno;
@@ -818,6 +830,17 @@ static int _http_process(audio_element_handle_t self, char *in_buffer, int in_le
             };
             http->connect_times++;
             ret = _http_reconnect(self);
+            // Sond: retry for a bounded window instead of failing on the first attempt while WiFi is still down.
+            const TickType_t retry_start = xTaskGetTickCount();
+            while (ret != ESP_OK && audio_element_is_stopping(self) == false
+                   && (xTaskGetTickCount() - retry_start) < pdMS_TO_TICKS(HTTP_RECONNECT_WINDOW_MS)) {
+                ESP_LOGW(TAG, "Reconnect failed, retrying in %d ms", HTTP_RECONNECT_RETRY_DELAY_MS);
+                vTaskDelay(pdMS_TO_TICKS(HTTP_RECONNECT_RETRY_DELAY_MS));
+                ret = _http_reconnect(self);
+            }
+            if (audio_element_is_stopping(self) == true) {
+                return AEL_IO_ABORT;
+            }
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to reset connection");
                 return ret;
