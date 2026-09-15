@@ -60,6 +60,11 @@ static const char *TAG = "HTTP_STREAM";
 #define MAX_PLAYLIST_LINE_SIZE (512)
 #define HTTP_STREAM_BUFFER_SIZE (3072)
 #define HTTP_MAX_CONNECT_TIMES  (5)
+#define HTTP_STREAM_CLIENT_TIMEOUT_MS  (20 * 1000)
+// Sond: delay between reconnect attempts after a connection loss, and how often to check whether the network is
+// back while it is down (see _http_reconnect_within_window).
+#define HTTP_RECONNECT_RETRY_DELAY_MS  (2000)
+#define HTTP_RECONNECT_NETWORK_POLL_MS (500)
 
 #define HLS_PREFER_BITRATE      (200*1024)
 #define HLS_KEY_CACHE_SIZE      (32)
@@ -101,6 +106,10 @@ typedef struct http_stream {
     int64_t                         request_range_end;
     bool                            is_last_range;
     const char                      *user_agent;
+    int                             reconnect_window_ms; /* Sond: retry budget with the network up after a mid-stream loss */
+    int                             reconnect_wait_max_ms; /* Sond: total cap on the retry, network down included */
+    bool                            (*network_ready)(void); /* Sond: NULL means the network always counts as up */
+    int                             attempt_timeout_ms;  /* Sond: client timeout for the next open, 0 = default */
 } http_stream_t;
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
@@ -579,7 +588,7 @@ _stream_open_begin:
             .url = uri,
             .event_handler = _http_event_handle,
             .user_data = self,
-            .timeout_ms = 20 * 1000,
+            .timeout_ms = (http->attempt_timeout_ms > 0) ? http->attempt_timeout_ms : HTTP_STREAM_CLIENT_TIMEOUT_MS,
             .buffer_size = HTTP_STREAM_BUFFER_SIZE,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 1, 0)
             .buffer_size_tx = 2024,
@@ -692,6 +701,86 @@ static esp_err_t _http_reconnect(audio_element_handle_t self)
     return err;
 }
 
+static bool _http_network_ready(http_stream_t *http)
+{
+    return (http->network_ready == NULL) || http->network_ready();
+}
+
+// Sond: reconnect after a connection loss in the middle of a stream. While the network is up, transport failures
+// (DNS, TLS, refused, timeouts) are retried every HTTP_RECONNECT_RETRY_DELAY_MS until they have used
+// reconnect_window_ms, with each attempt's client timeout capped at the budget left. While network_ready() says
+// the network is down, no attempt is made and that time does not use the budget, so a WiFi drop that takes a few
+// association attempts to recover still resumes the track; reconnect_wait_max_ms caps the whole retry. An HTTP
+// 4xx gives up at once, since retrying cannot fix it. reconnect_window_ms 0 keeps ADF's single attempt.
+static esp_err_t _http_reconnect_within_window(audio_element_handle_t self)
+{
+    http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    if (http->reconnect_window_ms <= 0) {
+        return _http_reconnect(self);
+    }
+    const int window_ms = http->reconnect_window_ms;
+    const int wait_max_ms = (http->reconnect_wait_max_ms > window_ms) ? http->reconnect_wait_max_ms : window_ms;
+    const TickType_t start = xTaskGetTickCount();
+    int ready_ms = 0;
+    bool ready = _http_network_ready(http);
+    bool was_down = false;
+    esp_err_t ret = ESP_FAIL;
+    for (;;) {
+        const TickType_t attempt_start = xTaskGetTickCount();
+        if (ready) {
+            int left_ms = window_ms - ready_ms;
+            const int total_left_ms = wait_max_ms - (int)pdTICKS_TO_MS(attempt_start - start);
+            if (total_left_ms < left_ms) {
+                left_ms = total_left_ms;
+            }
+            if (left_ms < 1) {
+                left_ms = 1;
+            }
+            http->attempt_timeout_ms = (left_ms < HTTP_STREAM_CLIENT_TIMEOUT_MS) ? left_ms : HTTP_STREAM_CLIENT_TIMEOUT_MS;
+            ret = _http_reconnect(self);
+            http->attempt_timeout_ms = 0;
+            if (ret == ESP_OK) {
+                // The attempt may have run with a shortened timeout; streaming reads use the normal one.
+                esp_http_client_set_timeout_ms(http->client, HTTP_STREAM_CLIENT_TIMEOUT_MS);
+                if (was_down) {
+                    ESP_LOGI(TAG, "Reconnected %d ms after the connection loss", (int)pdTICKS_TO_MS(xTaskGetTickCount() - start));
+                }
+                return ESP_OK;
+            }
+            const int status = (http->client != NULL) ? esp_http_client_get_status_code(http->client) : 0;
+            if (status >= 400 && status < 500) {
+                ESP_LOGE(TAG, "Reconnect got HTTP %d, giving up", status);
+                return ret;
+            }
+            ready_ms += (int)pdTICKS_TO_MS(xTaskGetTickCount() - attempt_start);
+        }
+        if (audio_element_is_stopping(self)) {
+            return ret;
+        }
+        const int delay_ms = ready ? HTTP_RECONNECT_RETRY_DELAY_MS : HTTP_RECONNECT_NETWORK_POLL_MS;
+        const int total_ms = (int)pdTICKS_TO_MS(xTaskGetTickCount() - start);
+        if (ready && ready_ms + delay_ms >= window_ms) {
+            ESP_LOGE(TAG, "Reconnect failed for %d ms with the network up, giving up", ready_ms);
+            return ret;
+        }
+        if (total_ms + delay_ms >= wait_max_ms) {
+            ESP_LOGE(TAG, "Reconnect gave up after %d ms (%d ms with the network up)", total_ms, ready_ms);
+            return ret;
+        }
+        if (ready) {
+            ESP_LOGW(TAG, "Reconnect failed, retrying in %d ms", delay_ms);
+        } else if (!was_down) {
+            ESP_LOGW(TAG, "Network down, waiting up to %d ms for it to return", wait_max_ms - total_ms);
+        }
+        was_down |= !ready;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        if (ready) {
+            ready_ms += delay_ms;
+        }
+        ready = _http_network_ready(http);
+    }
+}
+
 static bool _check_range_done(audio_element_handle_t self)
 {
     http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
@@ -728,6 +817,16 @@ static int _http_read(audio_element_handle_t self, char *buffer, int len, TickTy
     if (rlen <= 0) {
         http->_errno = esp_http_client_get_errno(http->client);
         ESP_LOGW(TAG, "No more data,errno:%d, total_bytes:%llu, rlen = %d", http->_errno, info.byte_pos, rlen);
+        // Sond: a plain file whose body stops short of its Content-Length lost the connection (a WiFi drop can
+        // end the TLS session with errno 0). Report it as a reset so _http_process reconnects from byte_pos
+        // instead of finishing the track early. Not for gzip bodies: total_bytes is then the compressed
+        // Content-Length while byte_pos counts decompressed bytes, so the two cannot be compared.
+        if (http->_errno == 0 && info.total_bytes > 0 && info.byte_pos < info.total_bytes
+            && http->request_range_size == 0 && http->is_playlist_resolved == false && http->hls_key == NULL
+            && http->gzip_encoding == false) {
+            ESP_LOGW(TAG, "Body ended at %lld of %lld bytes, reconnecting", (long long)info.byte_pos, (long long)info.total_bytes);
+            http->_errno = ECONNRESET;
+        }
         if (http->_errno != 0) {  // Error occuered, reset connection
             ESP_LOGW(TAG, "Got %d errno(%s)", http->_errno, strerror(http->_errno));
             return http->_errno;
@@ -817,7 +916,10 @@ static int _http_process(audio_element_handle_t self, char *in_buffer, int in_le
                 return ESP_FAIL;
             };
             http->connect_times++;
-            ret = _http_reconnect(self);
+            ret = _http_reconnect_within_window(self);
+            if (audio_element_is_stopping(self) == true) {
+                return AEL_IO_ABORT;
+            }
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to reset connection");
                 return ret;
@@ -908,6 +1010,9 @@ audio_element_handle_t http_stream_init(http_stream_cfg_t *config)
         cfg.write = _http_write;
     }
     http->request_range_size = config->request_range_size;
+    http->reconnect_window_ms = config->reconnect_window_ms;
+    http->reconnect_wait_max_ms = config->reconnect_wait_max_ms;
+    http->network_ready = config->network_ready;
     if (config->request_size) {
         cfg.buffer_len = config->request_size;
     }

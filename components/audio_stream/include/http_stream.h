@@ -95,6 +95,17 @@ typedef struct {
                                                              Request full range of resource if set to 0
                                                              Range size bigger than request size is recommended */
     const char                  *user_agent;            /*!< The User Agent string to send with HTTP requests */
+    int                         reconnect_window_ms;    /*!< After a connection loss in the middle of a stream, keep retrying
+                                                             transport failures until they have used this much time with the
+                                                             network up (each attempt is capped at the budget left, and an HTTP
+                                                             4xx gives up at once). 0 makes a single immediate attempt, as
+                                                             upstream ADF does */
+    int                         reconnect_wait_max_ms;  /*!< Cap on the whole retry, including time spent waiting for the
+                                                             network to come back. Values below reconnect_window_ms mean
+                                                             reconnect_window_ms */
+    bool                        (*network_ready)(void); /*!< Optional. Returns false while the network is down; the retry then
+                                                             waits without attempting and without using reconnect_window_ms.
+                                                             NULL means the network always counts as up */
 } http_stream_cfg_t;
 
 #define HTTP_STREAM_TASK_STACK          (6 * 1024)
@@ -117,6 +128,9 @@ typedef struct {
     .cert_pem  = NULL,                           \
     .crt_bundle_attach = NULL,                   \
     .user_agent = NULL,                          \
+    .reconnect_window_ms = 0,                    \
+    .reconnect_wait_max_ms = 0,                  \
+    .network_ready = NULL,                       \
 }
 
 /**
