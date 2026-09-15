@@ -60,9 +60,8 @@ static const char *TAG = "HTTP_STREAM";
 #define MAX_PLAYLIST_LINE_SIZE (512)
 #define HTTP_STREAM_BUFFER_SIZE (3072)
 #define HTTP_MAX_CONNECT_TIMES  (5)
-// Sond: after a connection loss, keep retrying the reconnect for this long (WiFi can take several seconds
-// to come back after a drop) before failing the stream.
-#define HTTP_RECONNECT_WINDOW_MS       (60 * 1000)
+#define HTTP_STREAM_CLIENT_TIMEOUT_MS  (20 * 1000)
+// Sond: delay between reconnect attempts after a connection loss (see _http_reconnect_within_window).
 #define HTTP_RECONNECT_RETRY_DELAY_MS  (2000)
 
 #define HLS_PREFER_BITRATE      (200*1024)
@@ -105,6 +104,8 @@ typedef struct http_stream {
     int64_t                         request_range_end;
     bool                            is_last_range;
     const char                      *user_agent;
+    int                             reconnect_window_ms; /* Sond: retry window after a mid-stream connection loss */
+    int                             attempt_timeout_ms;  /* Sond: client timeout for the next open, 0 = default */
 } http_stream_t;
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
@@ -583,7 +584,7 @@ _stream_open_begin:
             .url = uri,
             .event_handler = _http_event_handle,
             .user_data = self,
-            .timeout_ms = 20 * 1000,
+            .timeout_ms = (http->attempt_timeout_ms > 0) ? http->attempt_timeout_ms : HTTP_STREAM_CLIENT_TIMEOUT_MS,
             .buffer_size = HTTP_STREAM_BUFFER_SIZE,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 1, 0)
             .buffer_size_tx = 2024,
@@ -694,6 +695,46 @@ static esp_err_t _http_reconnect(audio_element_handle_t self)
     err |= audio_element_set_byte_pos(self, info.byte_pos);
     err |= _http_open(self);
     return err;
+}
+
+// Sond: reconnect after a connection loss in the middle of a stream. Transport failures (WiFi still down, DNS,
+// TLS, timeouts) are retried every HTTP_RECONNECT_RETRY_DELAY_MS until reconnect_window_ms has passed, with each
+// attempt's client timeout capped at the time left, so the whole retry stays inside the window. An HTTP 4xx
+// answer gives up at once, since retrying cannot fix it. reconnect_window_ms 0 keeps ADF's single attempt.
+static esp_err_t _http_reconnect_within_window(audio_element_handle_t self)
+{
+    http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    const TickType_t window = pdMS_TO_TICKS(http->reconnect_window_ms);
+    const TickType_t start = xTaskGetTickCount();
+    esp_err_t ret;
+    for (;;) {
+        if (window > 0) {
+            const TickType_t elapsed = xTaskGetTickCount() - start;
+            const int left_ms = (elapsed < window) ? (int)pdTICKS_TO_MS(window - elapsed) : 1;
+            http->attempt_timeout_ms = (left_ms < HTTP_STREAM_CLIENT_TIMEOUT_MS) ? left_ms : HTTP_STREAM_CLIENT_TIMEOUT_MS;
+        }
+        ret = _http_reconnect(self);
+        http->attempt_timeout_ms = 0;
+        if (ret == ESP_OK) {
+            // The attempt may have run with a shortened timeout; streaming reads use the normal one.
+            esp_http_client_set_timeout_ms(http->client, HTTP_STREAM_CLIENT_TIMEOUT_MS);
+            return ESP_OK;
+        }
+        const int status = (http->client != NULL) ? esp_http_client_get_status_code(http->client) : 0;
+        if (status >= 400 && status < 500) {
+            ESP_LOGE(TAG, "Reconnect got HTTP %d, giving up", status);
+            return ret;
+        }
+        if (window == 0 || audio_element_is_stopping(self)) {
+            return ret;
+        }
+        if (xTaskGetTickCount() - start + pdMS_TO_TICKS(HTTP_RECONNECT_RETRY_DELAY_MS) >= window) {
+            ESP_LOGE(TAG, "Reconnect failed for %d ms, giving up", http->reconnect_window_ms);
+            return ret;
+        }
+        ESP_LOGW(TAG, "Reconnect failed, retrying in %d ms", HTTP_RECONNECT_RETRY_DELAY_MS);
+        vTaskDelay(pdMS_TO_TICKS(HTTP_RECONNECT_RETRY_DELAY_MS));
+    }
 }
 
 static bool _check_range_done(audio_element_handle_t self)
@@ -829,15 +870,7 @@ static int _http_process(audio_element_handle_t self, char *in_buffer, int in_le
                 return ESP_FAIL;
             };
             http->connect_times++;
-            ret = _http_reconnect(self);
-            // Sond: retry for a bounded window instead of failing on the first attempt while WiFi is still down.
-            const TickType_t retry_start = xTaskGetTickCount();
-            while (ret != ESP_OK && audio_element_is_stopping(self) == false
-                   && (xTaskGetTickCount() - retry_start) < pdMS_TO_TICKS(HTTP_RECONNECT_WINDOW_MS)) {
-                ESP_LOGW(TAG, "Reconnect failed, retrying in %d ms", HTTP_RECONNECT_RETRY_DELAY_MS);
-                vTaskDelay(pdMS_TO_TICKS(HTTP_RECONNECT_RETRY_DELAY_MS));
-                ret = _http_reconnect(self);
-            }
+            ret = _http_reconnect_within_window(self);
             if (audio_element_is_stopping(self) == true) {
                 return AEL_IO_ABORT;
             }
@@ -931,6 +964,7 @@ audio_element_handle_t http_stream_init(http_stream_cfg_t *config)
         cfg.write = _http_write;
     }
     http->request_range_size = config->request_range_size;
+    http->reconnect_window_ms = config->reconnect_window_ms;
     if (config->request_size) {
         cfg.buffer_len = config->request_size;
     }
