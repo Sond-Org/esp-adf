@@ -37,7 +37,9 @@ extern "C" {
  * @brief      HTTP Stream hook type
  */
 typedef enum {
-    HTTP_STREAM_PRE_REQUEST = 0x01, /*!< The event handler will be called before HTTP Client making the connection to the server */
+    HTTP_STREAM_PRE_REQUEST = 0x01, /*!< The event handler will be called before HTTP Client making the connection to the server.
+                                     * Sond: called before every request, with the client's URL already set: the first one,
+                                     * a reconnect, the target of a 301/302 and the next track of a playlist */
     HTTP_STREAM_ON_REQUEST,         /*!< The event handler will be called when HTTP Client is requesting data,
                                      * If the fucntion return the value (-1: ESP_FAIL), HTTP Client will be stopped
                                      * If the fucntion return the value > 0, HTTP Stream will ignore the post_field

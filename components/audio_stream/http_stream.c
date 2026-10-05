@@ -223,6 +223,19 @@ static int dispatch_hook(audio_element_handle_t self, http_stream_event_id_t typ
     return ESP_OK;
 }
 
+// Sond: HTTP_STREAM_PRE_REQUEST runs before every request the stream sends, once the client's URL is set:
+// the first one, a reconnect, the target of a 301/302, and the next track of a playlist. The client keeps
+// headers across those, so this is where a hook adds a header for one origin and removes it for the others
+// (the device token must not follow a redirect to a presigned storage URL or reach an HLS segment host).
+static esp_err_t _dispatch_pre_request(audio_element_handle_t self)
+{
+    if (dispatch_hook(self, HTTP_STREAM_PRE_REQUEST, NULL, 0) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to process user callback");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 static bool _is_playlist(audio_element_info_t *info, const char *uri)
 {
     if (info->codec_fmt == ESP_AUDIO_TYPE_M3U8 || info->codec_fmt == ESP_AUDIO_TYPE_PLS) {
@@ -469,8 +482,7 @@ static esp_err_t _http_load_uri(audio_element_handle_t self, audio_element_info_
 
     esp_http_client_close(http->client);
 
-    if (dispatch_hook(self, HTTP_STREAM_PRE_REQUEST, NULL, 0) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to process user callback");
+    if (_dispatch_pre_request(self) != ESP_OK) {
         return ESP_FAIL;
     }
 
@@ -529,6 +541,9 @@ _stream_redirect:
     if (status_code == 301 || status_code == 302) {
         esp_http_client_set_redirection(http->client);
         esp_http_client_close(http->client); // Temporary fix to handle stuck on redirection
+        if (_dispatch_pre_request(self) != ESP_OK) {
+            return ESP_FAIL;
+        }
         goto _stream_redirect;
     }
     if (status_code != 200
@@ -1054,6 +1069,9 @@ esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el)
     char *track = _playlist_get_next_track(el);
     if (track) {
         esp_http_client_set_url(http->client, track);
+        if (_dispatch_pre_request(el) != ESP_OK) {
+            return ESP_FAIL;
+        }
         char *buffer = NULL;
         int post_len = esp_http_client_get_post_field(http->client, &buffer);
 redirection:
@@ -1071,6 +1089,9 @@ redirection:
         if (status_code == 301 || status_code == 302) {
             esp_http_client_set_redirection(http->client);
             esp_http_client_close(http->client); // Temporary fix to handle stuck on redirection
+            if (_dispatch_pre_request(el) != ESP_OK) {
+                return ESP_FAIL;
+            }
             goto redirection;
         }
         return ESP_OK;
