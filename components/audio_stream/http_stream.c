@@ -681,20 +681,18 @@ _stream_open_begin:
     if (_http_load_uri(self, &info) != ESP_OK) {
         const int status = esp_http_client_get_status_code(http->client);
         if (from_redirect && status >= 400 && status < 500) {
-            // The target expired or moved (a presigned URL past its lifetime): ask the original URL again.
+            // The target expired or moved (a presigned URL past its lifetime): ask the original URL again, on a
+            // new client, so a transport failure of that attempt is not read as the target's stale 4xx (which
+            // would end the reconnect retries).
             ESP_LOGW(TAG, "Redirect target answered %d, resuming from the stream URL", status);
             _forget_redirect(http);
             from_redirect = false;
-            uri = audio_element_get_uri(self);
-            esp_http_client_set_url(http->client, uri);
-            audio_element_getinfo(self, &info);
-            if (_http_load_uri(self, &info) == ESP_OK) {
-                goto _stream_loaded;
-            }
+            esp_http_client_cleanup(http->client);
+            http->client = NULL;
+            goto _stream_open_begin;
         }
         return ESP_FAIL;
     }
-_stream_loaded:
 
     if (_is_playlist(&info, uri) == true) {
         /**
