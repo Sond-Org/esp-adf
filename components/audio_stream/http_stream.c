@@ -685,6 +685,8 @@ _stream_open_begin:
             // new client, so a transport failure of that attempt is not read as the target's stale 4xx (which
             // would end the reconnect retries).
             ESP_LOGW(TAG, "Redirect target answered %d, resuming from the stream URL", status);
+            // `uri` points at the target being freed: clear it so the reopen picks the stream URI.
+            uri = NULL;
             _forget_redirect(http);
             from_redirect = false;
             esp_http_client_cleanup(http->client);
