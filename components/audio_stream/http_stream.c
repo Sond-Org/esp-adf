@@ -110,6 +110,10 @@ typedef struct http_stream {
     int                             reconnect_wait_max_ms; /* Sond: total cap on the retry, network down included */
     bool                            (*network_ready)(void); /* Sond: NULL means the network always counts as up */
     int                             attempt_timeout_ms;  /* Sond: client timeout for the next open, 0 = default */
+    char                           *redirect_from;     /* Sond: stream URI whose last 301/302 went to redirect_to */
+    char                           *redirect_to;       /* Sond: where a mid-track reconnect resumes (see _http_open) */
+    char                           *last_location;     /* Sond: Location header of the last response, if absolute */
+    bool                            reconnecting;      /* Sond: _http_close is part of _http_reconnect */
 } http_stream_t;
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
@@ -187,6 +191,15 @@ static esp_err_t _http_event_handle(esp_http_client_event_t *evt)
             return ESP_FAIL;
         }
     }
+    else if (strcasecmp(evt->header_key, "Location") == 0) {
+        // Sond: kept verbatim (with its query, which a presigned URL needs) for _remember_redirect.
+        http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
+        audio_free(http->last_location);
+        http->last_location = NULL;
+        if (strncasecmp(evt->header_value, "http://", 7) == 0 || strncasecmp(evt->header_value, "https://", 8) == 0) {
+            http->last_location = audio_strdup(evt->header_value);
+        }
+    }
     else if (strcasecmp(evt->header_key, "Content-Range") == 0) {
         http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
         if (http->request_range_size) {
@@ -227,6 +240,39 @@ static int dispatch_hook(audio_element_handle_t self, http_stream_event_id_t typ
 // the first one, a reconnect, the target of a 301/302, and the next track of a playlist. The client keeps
 // headers across those, so this is where a hook adds a header for one origin and removes it for the others
 // (the device token must not follow a redirect to a presigned storage URL or reach an HLS segment host).
+// Sond: a mid-track reconnect resumes from where the stream's last redirect pointed (for a catalog track, the
+// presigned storage URL creator-api 302'd to) instead of replaying the request that produced it. That skips a
+// TLS handshake and the redirect's round trip on every reconnect. Kept per stream URI and dropped when the
+// stream closes for good (stop or track change), so it never outlives the track it came from.
+static void _forget_redirect(http_stream_t *http)
+{
+    audio_free(http->last_location);
+    http->last_location = NULL;
+    audio_free(http->redirect_from);
+    audio_free(http->redirect_to);
+    http->redirect_from = NULL;
+    http->redirect_to = NULL;
+}
+
+static void _remember_redirect(audio_element_handle_t self, http_stream_t *http)
+{
+    const char *from = audio_element_get_uri(self);
+    // The Location header, not esp_http_client_get_url(): that rebuilds the URL without its query string, and
+    // a presigned URL is nothing without its signature. A relative Location is not remembered.
+    char *location = http->last_location;
+    http->last_location = NULL;
+    _forget_redirect(http);
+    if (from == NULL || location == NULL) {
+        audio_free(location);
+        return;
+    }
+    http->redirect_from = audio_strdup(from);
+    http->redirect_to = location;
+    if (http->redirect_from == NULL) {
+        _forget_redirect(http);
+    }
+}
+
 static esp_err_t _dispatch_pre_request(audio_element_handle_t self)
 {
     if (dispatch_hook(self, HTTP_STREAM_PRE_REQUEST, NULL, 0) != ESP_OK) {
@@ -541,6 +587,9 @@ _stream_redirect:
     if (status_code == 301 || status_code == 302) {
         esp_http_client_set_redirection(http->client);
         esp_http_client_close(http->client); // Temporary fix to handle stuck on redirection
+        if (!http->is_playlist_resolved) {
+            _remember_redirect(self, http);
+        }
         if (_dispatch_pre_request(self) != ESP_OK) {
             return ESP_FAIL;
         }
@@ -565,6 +614,7 @@ static esp_err_t _http_open(audio_element_handle_t self)
     char *uri = NULL;
     audio_element_info_t info;
     ESP_LOGD(TAG, "_http_open");
+    bool from_redirect = false;
 
     if (http->is_open) {
         ESP_LOGE(TAG, "already opened");
@@ -589,6 +639,13 @@ _stream_open_begin:
             goto _stream_open_begin;
         }
         uri = audio_element_get_uri(self);
+        // Sond: resume a dropped track from its redirect target (see _remember_redirect).
+        if (info.byte_pos > 0 && uri != NULL && http->redirect_to != NULL && http->redirect_from != NULL &&
+            strcmp(uri, http->redirect_from) == 0) {
+            uri = http->redirect_to;
+            from_redirect = true;
+            ESP_LOGI(TAG, "Resuming at byte %lld from the last redirect target", (long long)info.byte_pos);
+        }
     }
 
     if (uri == NULL) {
@@ -622,6 +679,20 @@ _stream_open_begin:
     audio_element_getinfo(self, &info);
 
     if (_http_load_uri(self, &info) != ESP_OK) {
+        const int status = esp_http_client_get_status_code(http->client);
+        if (from_redirect && status >= 400 && status < 500) {
+            // The target expired or moved (a presigned URL past its lifetime): ask the original URL again, on a
+            // new client, so a transport failure of that attempt is not read as the target's stale 4xx (which
+            // would end the reconnect retries).
+            ESP_LOGW(TAG, "Redirect target answered %d, resuming from the stream URL", status);
+            // `uri` points at the target being freed: clear it so the reopen picks the stream URI.
+            uri = NULL;
+            _forget_redirect(http);
+            from_redirect = false;
+            esp_http_client_cleanup(http->client);
+            http->client = NULL;
+            goto _stream_open_begin;
+        }
         return ESP_FAIL;
     }
 
@@ -680,6 +751,9 @@ static esp_err_t _http_close(audio_element_handle_t self)
     }
 
     if (AEL_STATE_PAUSED != audio_element_get_state(self)) {
+        if (!http->reconnecting) {
+            _forget_redirect(http);
+        }
         if (http->enable_playlist_parser) {
             http_playlist_clear(http->playlist);
             http->is_playlist_resolved = false;
@@ -710,7 +784,10 @@ static esp_err_t _http_reconnect(audio_element_handle_t self)
     audio_element_info_t info = {0};
     AUDIO_NULL_CHECK(TAG, self, return ESP_FAIL);
     err |= audio_element_getinfo(self, &info);
+    http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    http->reconnecting = true;
     err |= _http_close(self);
+    http->reconnecting = false;
     err |= audio_element_set_byte_pos(self, info.byte_pos);
     err |= _http_open(self);
     return err;
@@ -955,6 +1032,7 @@ static int _http_process(audio_element_handle_t self, char *in_buffer, int in_le
 static esp_err_t _http_destroy(audio_element_handle_t self)
 {
     http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    _forget_redirect(http);
     if (http->playlist) {
         audio_free(http->playlist->data);
         audio_free(http->playlist);
