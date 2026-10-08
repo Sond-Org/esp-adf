@@ -800,6 +800,11 @@ _stream_open_begin:
         }
         return ESP_FAIL;
     }
+    if (from_redirect) {
+        // Sond: `uri` pointed at redirect_to, which a further redirect during the open replaced (and freed): use
+        // the target as it stands now, or the stream URI if that redirect was relative and not remembered.
+        uri = http->redirect_to != NULL ? http->redirect_to : audio_element_get_uri(self);
+    }
 
     if (_is_playlist(&info, uri) == true) {
         /**
