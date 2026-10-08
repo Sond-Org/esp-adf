@@ -804,6 +804,10 @@ _stream_open_begin:
         // Sond: `uri` pointed at redirect_to, which a further redirect during the open replaced (and freed): use
         // the target as it stands now, or the stream URI if that redirect was relative and not remembered.
         uri = http->redirect_to != NULL ? http->redirect_to : audio_element_get_uri(self);
+        // Only this open started at a redirect target: a later pass (a playlist entry, an HLS key) has its own URI
+        // and no target fallback.
+        from_redirect = false;
+        from_first_target = false;
     }
 
     if (_is_playlist(&info, uri) == true) {
