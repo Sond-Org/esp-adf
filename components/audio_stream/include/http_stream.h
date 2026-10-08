@@ -39,7 +39,7 @@ extern "C" {
 typedef enum {
     HTTP_STREAM_PRE_REQUEST = 0x01, /*!< The event handler will be called before HTTP Client making the connection to the server.
                                      * Sond: called before every request, with the client's URL already set: the first one,
-                                     * a reconnect, the target of a 301/302 and the next track of a playlist */
+                                     * a reconnect, the target of a redirect and the next track of a playlist */
     HTTP_STREAM_ON_REQUEST,         /*!< The event handler will be called when HTTP Client is requesting data,
                                      * If the fucntion return the value (-1: ESP_FAIL), HTTP Client will be stopped
                                      * If the fucntion return the value > 0, HTTP Stream will ignore the post_field
@@ -55,6 +55,11 @@ typedef enum {
     HTTP_STREAM_RESOLVE_ALL_TRACKS,
     HTTP_STREAM_FINISH_TRACK,
     HTTP_STREAM_FINISH_PLAYLIST,
+    HTTP_STREAM_ON_HEADERS,         /*!< Sond: after each request's response headers were read, buffer_len = the HTTP status,
+                                     * or after a request that failed before them, buffer_len = -1. The return value is ignored */
+    HTTP_STREAM_ON_REDIRECT,        /*!< Sond: before following a 301, 302, 303, 307 or 308. buffer = a writable, NUL-terminated
+                                     * copy of the Location, buffer_len = its capacity; the hook may rewrite it in place.
+                                     * Return -1 (ESP_FAIL) to fail the request */
 } http_stream_event_id_t;
 
 /**
