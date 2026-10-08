@@ -117,7 +117,20 @@ typedef struct http_stream {
     char                           *redirect_to;       /* Sond: where a mid-track reconnect resumes (see _http_open) */
     char                           *last_location;     /* Sond: Location header of the current response, if any */
     bool                            reconnecting;      /* Sond: _http_close is part of _http_reconnect */
+    char                           *first_target;      /* Sond: http_stream_set_first_target(), under s_first_target_lock */
 } http_stream_t;
+
+// Sond: guards http_stream_t.first_target, which the caller's task sets while the reader task may take it.
+static portMUX_TYPE s_first_target_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static char *_take_first_target(http_stream_t *http)
+{
+    portENTER_CRITICAL(&s_first_target_lock);
+    char *target = http->first_target;
+    http->first_target = NULL;
+    portEXIT_CRITICAL(&s_first_target_lock);
+    return target;
+}
 
 static esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el);
 
@@ -686,6 +699,7 @@ static esp_err_t _http_open(audio_element_handle_t self)
     audio_element_info_t info;
     ESP_LOGD(TAG, "_http_open");
     bool from_redirect = false;
+    bool from_first_target = false;
 
     if (http->is_open) {
         ESP_LOGE(TAG, "already opened");
@@ -710,9 +724,26 @@ _stream_open_begin:
             goto _stream_open_begin;
         }
         uri = audio_element_get_uri(self);
+        // Sond: the first open of a track goes straight to a target the caller resolved ahead of time (see
+        // http_stream_set_first_target). It is kept as this stream's redirect target, so a mid-track reconnect
+        // resumes from it too; if it fails, the stream URI is opened instead (below).
+        char *first_target = (info.byte_pos == 0 && uri != NULL) ? _take_first_target(http) : NULL;
+        if (first_target != NULL) {
+            _forget_redirect(http);
+            http->redirect_from = audio_strdup(uri);
+            if (http->redirect_from == NULL) {
+                audio_free(first_target);
+            } else {
+                http->redirect_to = first_target;
+                uri = http->redirect_to;
+                from_redirect = true;
+                from_first_target = true;
+                ESP_LOGI(TAG, "Opening the track at its resolved target");
+            }
+        }
         // Sond: resume a dropped track from its redirect target (see _remember_redirect).
-        if (info.byte_pos > 0 && uri != NULL && http->redirect_to != NULL && http->redirect_from != NULL &&
-            strcmp(uri, http->redirect_from) == 0) {
+        if (!from_first_target && info.byte_pos > 0 && uri != NULL && http->redirect_to != NULL &&
+            http->redirect_from != NULL && strcmp(uri, http->redirect_from) == 0) {
             uri = http->redirect_to;
             from_redirect = true;
             ESP_LOGI(TAG, "Resuming at byte %lld from the last redirect target", (long long)info.byte_pos);
@@ -751,11 +782,14 @@ _stream_open_begin:
 
     if (_http_load_uri(self, &info) != ESP_OK) {
         const int status = esp_http_client_get_status_code(http->client);
-        if (from_redirect && status >= 400 && status < 500) {
+        // A resolved first target falls back on any failure: the stream URI was never tried, so nothing is lost by
+        // walking it now, and that walk is exactly what the track would have done without the target.
+        if (from_redirect && ((status >= 400 && status < 500) || from_first_target)) {
             // The target expired or moved (a presigned URL past its lifetime): ask the original URL again, on a
             // new client, so a transport failure of that attempt is not read as the target's stale 4xx (which
             // would end the reconnect retries).
             ESP_LOGW(TAG, "Redirect target answered %d, resuming from the stream URL", status);
+            from_first_target = false;
             // `uri` points at the target being freed: clear it so the reopen picks the stream URI.
             uri = NULL;
             _forget_redirect(http);
@@ -1104,6 +1138,7 @@ static esp_err_t _http_destroy(audio_element_handle_t self)
 {
     http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
     _forget_redirect(http);
+    audio_free(_take_first_target(http));
     if (http->playlist) {
         audio_free(http->playlist->data);
         audio_free(http->playlist);
@@ -1269,6 +1304,23 @@ esp_err_t http_stream_restart(audio_element_handle_t el)
 {
     http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
     http->is_playlist_resolved = false;
+    return ESP_OK;
+}
+
+esp_err_t http_stream_set_first_target(audio_element_handle_t el, const char *url)
+{
+    AUDIO_NULL_CHECK(TAG, el, return ESP_ERR_INVALID_ARG);
+    http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
+    char *copy = NULL;
+    if (url != NULL) {
+        copy = audio_strdup(url);
+        AUDIO_MEM_CHECK(TAG, copy, return ESP_ERR_NO_MEM);
+    }
+    portENTER_CRITICAL(&s_first_target_lock);
+    char *old = http->first_target;
+    http->first_target = copy;
+    portEXIT_CRITICAL(&s_first_target_lock);
+    audio_free(old);
     return ESP_OK;
 }
 

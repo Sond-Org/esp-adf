@@ -191,6 +191,21 @@ esp_err_t http_stream_fetch_again(audio_element_handle_t el);
  */
 esp_err_t http_stream_set_server_cert(audio_element_handle_t el, const char *cert);
 
+/**
+ * @brief      Sond: open the next track at `url` instead of walking its stream URI's redirects, e.g. the final URL
+ *             of a podcast enclosure's chain resolved ahead of time. Used once, by the next open at byte 0; it then
+ *             serves as the stream's redirect target for mid-track reconnects. If that open fails for any reason the
+ *             stream URI is opened as usual. Pass NULL to clear an unused one (call it after the play returns).
+ *
+ * @param       el    The http_stream element handle
+ * @param       url   The target (copied), or NULL
+ *
+ * @return
+ *     - ESP_OK on success
+ *     - ESP_ERR_NO_MEM when the copy fails (nothing is set)
+ */
+esp_err_t http_stream_set_first_target(audio_element_handle_t el, const char *url);
+
 #ifdef __cplusplus
 }
 #endif
