@@ -39,7 +39,7 @@ extern "C" {
 typedef enum {
     HTTP_STREAM_PRE_REQUEST = 0x01, /*!< The event handler will be called before HTTP Client making the connection to the server.
                                      * Sond: called before every request, with the client's URL already set: the first one,
-                                     * a reconnect, the target of a 301/302 and the next track of a playlist */
+                                     * a reconnect, the target of a redirect and the next track of a playlist */
     HTTP_STREAM_ON_REQUEST,         /*!< The event handler will be called when HTTP Client is requesting data,
                                      * If the fucntion return the value (-1: ESP_FAIL), HTTP Client will be stopped
                                      * If the fucntion return the value > 0, HTTP Stream will ignore the post_field
@@ -55,6 +55,14 @@ typedef enum {
     HTTP_STREAM_RESOLVE_ALL_TRACKS,
     HTTP_STREAM_FINISH_TRACK,
     HTTP_STREAM_FINISH_PLAYLIST,
+    HTTP_STREAM_ON_HEADERS,         /*!< Sond: after each request's response headers were read, buffer_len = the HTTP status and
+                                     * buffer = the response's Content-Type (NUL-terminated, "" when absent, truncated to 63
+                                     * bytes), or after a request that failed before them, buffer_len = -1 and buffer = NULL.
+                                     * Return -1 (ESP_FAIL) on a 200 or 206 to reject the body: the request fails as an open
+                                     * error would. The return value is ignored for every other status */
+    HTTP_STREAM_ON_REDIRECT,        /*!< Sond: before following a 301, 302, 303, 307 or 308. buffer = a writable, NUL-terminated
+                                     * copy of the Location, buffer_len = its capacity; the hook may rewrite it in place.
+                                     * Return -1 (ESP_FAIL) to fail the request */
 } http_stream_event_id_t;
 
 /**
@@ -185,6 +193,21 @@ esp_err_t http_stream_fetch_again(audio_element_handle_t el);
  *     - ESP_OK on success
  */
 esp_err_t http_stream_set_server_cert(audio_element_handle_t el, const char *cert);
+
+/**
+ * @brief      Sond: open the next track at `url` instead of walking its stream URI's redirects, e.g. the final URL
+ *             of a podcast enclosure's chain resolved ahead of time. Used once, by the next open at byte 0; it then
+ *             serves as the stream's redirect target for mid-track reconnects. If that open fails for any reason the
+ *             stream URI is opened as usual. Pass NULL to clear an unused one (call it after the play returns).
+ *
+ * @param       el    The http_stream element handle
+ * @param       url   The target (copied), or NULL
+ *
+ * @return
+ *     - ESP_OK on success
+ *     - ESP_ERR_NO_MEM when the copy fails (nothing is set)
+ */
+esp_err_t http_stream_set_first_target(audio_element_handle_t el, const char *url);
 
 #ifdef __cplusplus
 }
