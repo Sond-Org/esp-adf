@@ -55,8 +55,11 @@ typedef enum {
     HTTP_STREAM_RESOLVE_ALL_TRACKS,
     HTTP_STREAM_FINISH_TRACK,
     HTTP_STREAM_FINISH_PLAYLIST,
-    HTTP_STREAM_ON_HEADERS,         /*!< Sond: after each request's response headers were read, buffer_len = the HTTP status,
-                                     * or after a request that failed before them, buffer_len = -1. The return value is ignored */
+    HTTP_STREAM_ON_HEADERS,         /*!< Sond: after each request's response headers were read, buffer_len = the HTTP status and
+                                     * buffer = the response's Content-Type (NUL-terminated, "" when absent, truncated to 63
+                                     * bytes), or after a request that failed before them, buffer_len = -1 and buffer = NULL.
+                                     * Return -1 (ESP_FAIL) on a 200 or 206 to reject the body: the request fails as an open
+                                     * error would. The return value is ignored for every other status */
     HTTP_STREAM_ON_REDIRECT,        /*!< Sond: before following a 301, 302, 303, 307 or 308. buffer = a writable, NUL-terminated
                                      * copy of the Location, buffer_len = its capacity; the hook may rewrite it in place.
                                      * Return -1 (ESP_FAIL) to fail the request */

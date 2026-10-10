@@ -116,6 +116,7 @@ typedef struct http_stream {
     char                           *redirect_from;     /* Sond: stream URI whose last 301/302 went to redirect_to */
     char                           *redirect_to;       /* Sond: where a mid-track reconnect resumes (see _http_open) */
     char                           *last_location;     /* Sond: Location header of the current response, if any */
+    char                            content_type[64];  /* Sond: Content-Type of the current response ("" if none), truncated */
     bool                            reconnecting;      /* Sond: _http_close is part of _http_reconnect */
     char                           *first_target;      /* Sond: http_stream_set_first_target(), under s_first_target_lock */
 } http_stream_t;
@@ -190,6 +191,8 @@ static esp_err_t _http_event_handle(esp_http_client_event_t *evt)
     if (strcasecmp(evt->header_key, "Content-Type") == 0) {
         ESP_LOGD(TAG, "%s = %s", evt->header_key, evt->header_value);
         audio_element_set_codec_fmt(el, get_audio_type(evt->header_value));
+        http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
+        strlcpy(http->content_type, evt->header_value, sizeof(http->content_type));
     }
     else if (strcasecmp(evt->header_key, "Content-Encoding") == 0) {
         http_stream_t *http = (http_stream_t *)audio_element_getdata(el);
@@ -304,11 +307,26 @@ static bool _is_redirect(int status_code)
            status_code == 308;
 }
 
-// Sond: HTTP_STREAM_ON_HEADERS after every request's response headers (buffer_len = status) or after a request
-// that did not get them (buffer_len = -1). Observation only: the return value is ignored.
-static void _dispatch_on_headers(audio_element_handle_t self, int status_or_fail)
+// Sond: HTTP_STREAM_ON_HEADERS after every request's response headers (buffer_len = status, buffer = the
+// response's Content-Type, "" when it had none) or after a request that did not get them (buffer_len = -1,
+// buffer = NULL). Returns the hook's result; the callers act on ESP_FAIL only for a 200 or 206 (see
+// _headers_rejected), so a hook that rejects a body never changes how a redirect or an error is handled.
+static int _dispatch_on_headers(audio_element_handle_t self, int status_or_fail)
 {
-    dispatch_hook(self, HTTP_STREAM_ON_HEADERS, NULL, status_or_fail);
+    http_stream_t *http = (http_stream_t *)audio_element_getdata(self);
+    return dispatch_hook(self, HTTP_STREAM_ON_HEADERS, status_or_fail < 0 ? NULL : http->content_type,
+                         status_or_fail);
+}
+
+// Sond: dispatches ON_HEADERS and says whether the hook rejected a 200/206 body (e.g. a captive portal's HTML page).
+static bool _headers_rejected(audio_element_handle_t self, int status_or_fail)
+{
+    const int rc = _dispatch_on_headers(self, status_or_fail);
+    if ((status_or_fail == 200 || status_or_fail == 206) && rc == ESP_FAIL) {
+        ESP_LOGE(TAG, "Response body rejected by the stream hook, status code = %d", status_or_fail);
+        return true;
+    }
+    return false;
 }
 
 // Sond: points the client at the redirect it just received and dispatches PRE_REQUEST for that target. The hook
@@ -629,9 +647,10 @@ static esp_err_t _http_load_uri(audio_element_handle_t self, audio_element_info_
     int post_len = esp_http_client_get_post_field(http->client, &buffer);
     int redirects = 0;
 _stream_redirect:
-    // Sond: a Location belongs to the response that carried it, never to a later one.
+    // Sond: a Location and a Content-Type belong to the response that carried them, never to a later one.
     audio_free(http->last_location);
     http->last_location = NULL;
+    http->content_type[0] = '\0';
     if (http->gzip_encoding) {
         gzip_miniz_deinit(http->gzip);
         http->gzip = NULL;
@@ -672,7 +691,10 @@ _stream_redirect:
         audio_element_set_total_bytes(self, info->total_bytes);
     }
     int status_code = esp_http_client_get_status_code(http->client);
-    _dispatch_on_headers(self, cur_pos < 0 ? -1 : status_code);
+    if (_headers_rejected(self, cur_pos < 0 ? -1 : status_code)) {
+        esp_http_client_close(http->client);
+        return ESP_FAIL;
+    }
     if (_is_redirect(status_code)) {
         if (_follow_redirect(self, http, status_code, !http->is_playlist_resolved, &redirects, &post_len) != ESP_OK) {
             return ESP_FAIL;
@@ -1271,6 +1293,7 @@ esp_err_t http_stream_auto_connect_next_track(audio_element_handle_t el)
 redirection:
         audio_free(http->last_location);
         http->last_location = NULL;
+        http->content_type[0] = '\0';
         if ((esp_http_client_open(http->client, post_len)) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to open http stream");
             _dispatch_on_headers(el, -1);
@@ -1283,7 +1306,10 @@ redirection:
         info.total_bytes = esp_http_client_fetch_headers(http->client);
         ESP_LOGI(TAG, "total_bytes=%d", (int)info.total_bytes);
         int status_code = esp_http_client_get_status_code(http->client);
-        _dispatch_on_headers(el, info.total_bytes < 0 ? -1 : status_code);
+        if (_headers_rejected(el, info.total_bytes < 0 ? -1 : status_code)) {
+            esp_http_client_close(http->client);
+            return ESP_FAIL;
+        }
         if (_is_redirect(status_code)) {
             if (_follow_redirect(el, http, status_code, false, &redirects, &post_len) != ESP_OK) {
                 return ESP_FAIL;
